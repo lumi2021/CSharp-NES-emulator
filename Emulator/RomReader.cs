@@ -5,18 +5,17 @@ namespace Emulator;
 internal static class RomReader
 {
 
-    public static NESROM LoadFromPath(string path)
+    public static NesRom LoadFromPath(string path)
     {
         byte[] data = File.ReadAllBytes(path);
 
-        if (data[0] == 0x4E && data[1] == 0x45 && data[2] == 0x53 && data[3] == 0x1A)
-            return new NESROM(data);
-        else throw new Exception("Invalid NES room!");
+        if (data[0..4] is [0x4E, 0x45, 0x53, 0x1A]) return new NesRom(data);
+        throw new Exception("Invalid NES room!");
     }
 
 }
 
-public class NESROM
+public class NesRom
 {
 
     private byte[] header = [];
@@ -31,12 +30,14 @@ public class NESROM
     public byte CHRDataSize8KB => header[5];
 
     public bool Trainer => ((header[6] >> 6) & 1) == 1;
-    public NametableArrangement NametableArrangement => (((header[6] >> 8) & 1) == 0) ? NametableArrangement.Horizontal : NametableArrangement.Vertical;
+    public NametableArrangement NametableArrangement => ((header[6] >> 8) & 1) == 0
+        ? NametableArrangement.Horizontal
+        : NametableArrangement.Vertical;
 
     public byte[] PrgData => [.. prgData];
     public byte[] ChrData => [.. chrData];
 
-    public NESROM(byte[] data)
+    public NesRom(byte[] data)
     {
         header = data[0..16];
 
@@ -58,7 +59,7 @@ public class NESROM
         mapper = GetMapper((byte)((header[6] >> 4) | (header[7] & 0xF0)), this);
     }
 
-    private static Mapper GetMapper(byte mapper, NESROM parent)
+    private static Mapper GetMapper(byte mapper, NesRom parent)
     {
         return mapper switch
         {

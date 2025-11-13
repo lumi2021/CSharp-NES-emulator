@@ -65,7 +65,7 @@ public class RamMemory : Component
         ImGui.End();
     }
 
-    public void Store(ushort addr, params byte[] data)
+    public void Write(ushort addr, params byte[] data)
     {
         for (int i = 0; i < data.Length; i++)
         {

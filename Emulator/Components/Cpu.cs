@@ -4,7 +4,7 @@ using System.Text;
 
 namespace Emulator.Components;
 
-public class CPU : Component
+public class Cpu : Component
 {
     public ushort progCounter = 0;
 
@@ -56,8 +56,7 @@ public class CPU : Component
 
     private bool paused = true;
     public bool doStep = false;
-
-    private List<ExecutionFrame> _lastExecutedInstructions = [];
+    
     private bool _executionHistoryUpdated = false;
 
     public int clockCount = 0;
@@ -66,18 +65,17 @@ public class CPU : Component
     public ushort NonMaskableInterrupt => MemReadWord(0xFFFA);
     public ushort InterruptRequest => MemReadWord(0xFFFE);
 
-    public CPU(VirtualSystem mb) : base(mb)
+    public Cpu(VirtualSystem mb) : base(mb)
     {
         Program.DrawPopup += DebugCPU;
-        //Program.DrawPopup += DebugHistory;
     }
-
+    
     public void Reset()
     {
         SetProgramCounter(ResetVector);
         flags = 0;
     }
-    public void RequestNMInterrupt()
+    public void RequestNmInterrupt()
     {
         if (paused) return;
 
@@ -196,7 +194,7 @@ public class CPU : Component
                     else
                     {
                         addr = GetAddress(mode);
-                        val = system.Read(addr);
+                        val = system.Bus.CpuRead(addr);
                     }
 
                     Carry = (val & 0b_1000_0000) != 0;
@@ -207,7 +205,7 @@ public class CPU : Component
                     Zero = val == 0;
 
                     if (mode == AddressMode.Accumulator) accumulator = val;
-                    else system.Write(addr, val);
+                    else system.Bus.CpuWrite(addr, val);
 
                 } break;
             case Operation.Lsr: {
@@ -220,7 +218,7 @@ public class CPU : Component
                     else
                     {
                         addr = GetAddress(mode);
-                        val = system.Read(addr);
+                        val = system.Bus.CpuRead(addr);
                     }
 
                     Carry = (val & 0b_0000_0001) != 0;
@@ -231,7 +229,7 @@ public class CPU : Component
                     Zero = val == 0;
 
                     if (mode == AddressMode.Accumulator) accumulator = val;
-                    else system.Write(addr, val);
+                    else system.Bus.CpuWrite(addr, val);
                 } break;
             case Operation.Rol: {
                     ushort addr = 0;
@@ -244,7 +242,7 @@ public class CPU : Component
                     else
                     {
                         addr = GetAddress(mode);
-                        value = system.Read(addr);
+                        value = system.Bus.CpuRead(addr);
                     }
 
                     bool oldbit7 = (value & 0b_1000_0000) != 0;
@@ -254,7 +252,7 @@ public class CPU : Component
                     Carry = oldbit7;
 
                     if (mode == AddressMode.Accumulator) accumulator = value;
-                    else system.Write(addr, value);
+                    else system.Bus.CpuWrite(addr, value);
 
                     Negative = (value & (byte)SF.Negative) != 0;
                     Zero = value == 0;
@@ -271,7 +269,7 @@ public class CPU : Component
                     else
                     {
                         addr = GetAddress(mode);
-                        value = system.Read(addr);
+                        value = system.Bus.CpuRead(addr);
                     }
 
                     bool oldbit0 = (value & 0b_0000_0001) != 0;
@@ -281,7 +279,7 @@ public class CPU : Component
                     Carry = oldbit0;
 
                     if (mode == AddressMode.Accumulator) accumulator = value;
-                    else system.Write(addr, value);
+                    else system.Bus.CpuWrite(addr, value);
 
                     Negative = (value & (byte)SF.Negative) != 0;
                     Zero = value == 0;
@@ -377,8 +375,8 @@ public class CPU : Component
 
             case Operation.Dec: {
                     var addr = GetAddress(mode);
-                    int value = system.Read(addr) - 1;
-                    system.Write(addr, (byte)value);
+                    int value = system.Bus.CpuRead(addr) - 1;
+                    system.Bus.CpuWrite(addr, (byte)value);
 
                     flags = (byte)((flags & ~(byte)SF.Negative) | (byte)(value & (byte)SF.Negative));
                     flags = (byte)((flags & ~(byte)SF.Zero) | (value == 0 ? (byte)SF.Zero : 0));
@@ -398,7 +396,7 @@ public class CPU : Component
                     byte value = GetValue(mode, out var addr);
                     byte nvalue = (byte)(value + 1);
 
-                    system.Write(addr, nvalue);
+                    system.Bus.CpuWrite(addr, nvalue);
 
                     Negative = (nvalue & (byte)SF.Negative) != 0;
                     Zero = nvalue == 0;
@@ -533,7 +531,7 @@ public class CPU : Component
                     Carry = (val & 0b_1000_0000) != 0;
                     val = (byte)(val << 1);
 
-                    system.Write(addr, val);
+                    system.Bus.CpuWrite(addr, val);
 
                     // ORA
                     accumulator |= val;
@@ -551,7 +549,7 @@ public class CPU : Component
                     val |= (byte)(Carry ? 0b_0000_0001 : 0);
                     Carry = oldbit7;
 
-                    system.Write(addr, val);
+                    system.Bus.CpuWrite(addr, val);
 
                     // AND
                     accumulator &= val;
@@ -571,7 +569,7 @@ public class CPU : Component
                     Zero = val == 0;
 
                     if (mode == AddressMode.Accumulator) accumulator = val;
-                    else system.Write(addr, val);
+                    else system.Bus.CpuWrite(addr, val);
 
                     // EOR
                     accumulator ^= val;
@@ -605,7 +603,7 @@ public class CPU : Component
                     value |= (byte)(Carry ? 0b_1000_0000 : 0);
                     Carry = oldbit0;
 
-                    system.Write(addr, value);
+                    system.Bus.CpuWrite(addr, value);
 
                     // ADC
                     byte a = accumulator;
@@ -691,7 +689,7 @@ public class CPU : Component
         }
     }
 
-    private (Operation operation, AddressMode mode) DecodeOpCode(byte opCode)
+    private static (Operation operation, AddressMode mode) DecodeOpCode(byte opCode)
     {
       
         return opCode switch
@@ -1042,55 +1040,7 @@ public class CPU : Component
         }
         ImGui.End();
     }
-
-    private void DebugHistory()
-    {
-        ImGui.Begin("Execution history");
-        {
-            ImGui.BeginChild("container", new(0, -30),
-                ImGuiChildFlags.Border | ImGuiChildFlags.AlwaysAutoResize,
-                ImGuiWindowFlags.None | ImGuiWindowFlags.NoSavedSettings |  ImGuiWindowFlags.AlwaysVerticalScrollbar
-            );
-            ImGui.BeginTable("history", 3, ImGuiTableFlags.BordersH);
-
-            ImGui.TableSetupColumn("bytes", ImGuiTableColumnFlags.NoHeaderLabel | ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableSetupColumn("disasm", ImGuiTableColumnFlags.NoHeaderLabel | ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableSetupColumn("flags", ImGuiTableColumnFlags.NoHeaderLabel | ImGuiTableColumnFlags.WidthFixed);
-
-            foreach (var i in _lastExecutedInstructions)
-            {
-                ImGui.TableNextRow();
-
-                ImGui.TableSetColumnIndex(0);
-                ImGui.TextDisabled($"${i.pc:X4}: {i.BytesToString(system)}");
-
-                ImGui.TableSetColumnIndex(1);
-                ImGui.Text(i.Disassemble(system));
-
-                ImGui.TableSetColumnIndex(2);
-                if ((i.flags & (byte)SF.Carry) == (byte)SF.Carry) ImGui.Text("C"); else ImGui.TextDisabled("C"); ImGui.SameLine();
-                if ((i.flags & (byte)SF.Zero) == (byte)SF.Zero) ImGui.Text("Z"); else ImGui.TextDisabled("Z"); ImGui.SameLine();
-                if ((i.flags & (byte)SF.Interrupt) == (byte)SF.Interrupt) ImGui.Text("I"); else ImGui.TextDisabled("I"); ImGui.SameLine();
-                if ((i.flags & (byte)SF.Decimal) == (byte)SF.Decimal) ImGui.Text("D"); else ImGui.TextDisabled("D"); ImGui.SameLine();
-                if ((i.flags & (byte)SF.Break) == (byte)SF.Break) ImGui.Text("B"); else ImGui.TextDisabled("B"); ImGui.SameLine();
-                ImGui.TextDisabled("-"); ImGui.SameLine();
-                if ((i.flags & (byte)SF.Overflow) == (byte)SF.Overflow) ImGui.Text("O"); else ImGui.TextDisabled("O"); ImGui.SameLine();
-                if ((i.flags & (byte)SF.Negative) == (byte)SF.Negative) ImGui.Text("N"); else ImGui.TextDisabled("N");
-            }
-            if (_executionHistoryUpdated)
-            {
-                ImGui.SetScrollHereY(1.0f);
-                _executionHistoryUpdated = false;
-            }
-
-            ImGui.EndTable();
-            ImGui.EndChild();
-            ImGui.Separator();
-
-            if (ImGui.Button("Clear")) _lastExecutedInstructions.Clear();
-        }
-        ImGui.End();
-    }
+    
 
     public void SetProgramCounter(ushort value)
     {
@@ -1100,12 +1050,12 @@ public class CPU : Component
     public void MemWrite(ushort addr, byte val)
     {
         clockCount++;
-        system.Write(addr, val);
+        system.Bus.CpuWrite(addr, val);
     }
     public byte MemRead(ushort addr)
     {
         clockCount++;
-        return system.Read(addr);
+        return system.Bus.CpuRead(addr);
     }
     public ushort MemReadWord(ushort addr)
     {
@@ -1114,23 +1064,23 @@ public class CPU : Component
         ushort addr1 = addr;
         ushort addr2 = (ushort)((addr & 0xFF00) | ((addr + 1) & 0x00FF));
 
-        var a = system.Read(addr1);
-        var b = system.Read(addr2);
+        var a = system.Bus.CpuRead(addr1);
+        var b = system.Bus.CpuRead(addr2);
 
         return (ushort)((b << 8) | a);
     }
 
     public void Push(byte val)
     {
-        system.Write(StackAddress, val);
+        system.Bus.CpuWrite(StackAddress, val);
         stackPointer--;
     }
     public void Push(ushort val)
     {
         var b = BitConverter.GetBytes(val);
-        system.Write(StackAddress, b[1]);
+        system.Bus.CpuWrite(StackAddress, b[1]);
         stackPointer--;
-        system.Write(StackAddress, b[0]);
+        system.Bus.CpuWrite(StackAddress, b[0]);
         stackPointer--;
     }
 
@@ -1151,7 +1101,7 @@ public class CPU : Component
 
     public byte ReadCounter()
     {
-        return system.Read(progCounter++);
+        return system.Bus.CpuRead(progCounter++);
     }
     public ushort ReadCounterWord()
     {
@@ -1203,89 +1153,5 @@ public class CPU : Component
         Overflow  = 0b_01000000,
         Negative  = 0b_10000000,
     }
-
-    private readonly struct ExecutionFrame(ushort pc, Operation op, AddressMode mode, byte flags)
-    {
-        public readonly ushort pc = pc;
-        public readonly Operation instruction = op;
-        public readonly AddressMode addressMode = mode;
-        public readonly byte flags =flags;
-
-        // return the bytes (right ammount)
-        public readonly string BytesToString(VirtualSystem s)
-        {
-            byte[] bytes = [s.Rom.CPURead(pc), s.Rom.CPURead((ushort)(pc + 1)), s.Rom.CPURead((ushort)(pc + 2))];
-
-            return $"{bytes[0]:X2} " + addressMode switch
-            {
-                AddressMode.Accumulator or
-                AddressMode.Implied => "",
-
-                AddressMode.Absolute or
-                AddressMode.AbsoluteX or
-                AddressMode.AbsoluteY or
-                AddressMode.Indirect => $"{bytes[1]:X2} {bytes[2]:X2}",
-
-                AddressMode.Immediate or
-                AddressMode.XIndirect or
-                AddressMode.IndirectY or
-                AddressMode.Relative or
-                AddressMode.ZeroPage or
-                AddressMode.ZeroPageX or
-                AddressMode.ZeroPageY => $"{bytes[1]:X2}",
-
-                _ => $"(??? {addressMode})"
-            };
-        }
-        // basically disassemble
-        public readonly string Disassemble(VirtualSystem system)
-        {
-            var sb = new StringBuilder();
-
-            byte[] bytes = [0, system.Rom.CPURead((ushort)(pc + 1)), system.Rom.CPURead((ushort)(pc + 2))];
-
-            sb.Append($"{instruction.ToString().ToUpper()} ");
-            sb.Append(addressMode switch
-            {
-
-                AddressMode.Accumulator => "A",
-                AddressMode.Absolute => ((bytes[2] << 8 | bytes[1]) switch
-                {
-                    // PPU regs
-                    0x2000 => "$PPU_CTRL",
-                    0x2001 => "$PPU_MASK",
-                    0x2002 => "$PPU_STATUS",
-                    0x2003 => "$PPU_OAM_ADDR",
-                    0x2004 => "$PPU_OAM_DATA",
-                    0x2005 => "$PPU_SCROLL",
-                    0x2006 => "$PPU_ADDR",
-                    0x2007 => "$PPU_DATA",
-                    0x4014 => "$PPU_OAM_COPY",
-
-                    // APU regs
-                    0x2015 => "$APU_STATUS",
-
-                    // INPUT
-                    0x2016 => "$SBB_JOY1",
-                    0x2017 => "$FCC_JOY2",
-
-                    _ => $"${bytes[2]:X2}{bytes[1]:X2}"
-                }),
-                AddressMode.AbsoluteX => $"${bytes[2]:X2}{bytes[1]:X2}, X",
-                AddressMode.AbsoluteY => $"${bytes[2]:X2}{bytes[1]:X2}, Y",
-                AddressMode.Immediate => $"#${bytes[1]:X2}",
-                AddressMode.Implied => $"",
-                AddressMode.Indirect => $"(${bytes[2]:X2}{bytes[1]:X2})",
-                AddressMode.XIndirect => $"(${bytes[1]:X2},X)",
-                AddressMode.IndirectY => $"(${bytes[1]:X2}),Y",
-                AddressMode.Relative => $"${bytes[1]:X2}",
-                AddressMode.ZeroPage => $"${bytes[1]:X2}",
-                AddressMode.ZeroPageX => $"${bytes[1]:X2},X",
-                AddressMode.ZeroPageY => $"${bytes[1]:X2},Y",
-
-                _ => $"(??? {addressMode})"
-            });
-            return sb.ToString();
-        }
-    }
+    
 }

@@ -2,7 +2,7 @@
 
 namespace Emulator.Components;
 
-public class APU : Component
+public class Apu : Component
 {
 
     public bool DMCEnabled = false;
@@ -28,7 +28,7 @@ public class APU : Component
     public int TriangleCounter = 0;
 
 
-    public APU(VirtualSystem sys) : base(sys)
+    public Apu(VirtualSystem sys) : base(sys)
     {
     
     }

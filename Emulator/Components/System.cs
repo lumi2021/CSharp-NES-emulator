@@ -5,18 +5,20 @@ namespace Emulator.Components;
 
 public class VirtualSystem
 {
-    private CPU _cpu;
-    private PPU _ppu;
-    private APU _apu;
+    private Bus _bus;
+    private Cpu _cpu;
+    private Ppu _ppu;
+    private Apu _apu;
     private RamMemory _ramMemory;
     private RomMemory _romMemory;
 
     private JoyController _joy1;
     //private JoyController _joy2;
 
-    public CPU Cpu => _cpu;
-    public PPU Ppu => _ppu;
-    public APU Apu => _apu;
+    public Bus Bus => _bus;
+    public Cpu Cpu => _cpu;
+    public Ppu Ppu => _ppu;
+    public Apu Apu => _apu;
     public RamMemory Ram => _ramMemory;
     public RomMemory Rom => _romMemory;
 
@@ -26,6 +28,7 @@ public class VirtualSystem
 
     public VirtualSystem()
     {
+        _bus = new(this);
         _cpu = new(this);
         _ppu = new(this);
         _apu = new(this);
@@ -53,7 +56,7 @@ public class VirtualSystem
     }
 
 
-    public void InsertCartriadge(NESROM rom)
+    public void InsertCartriadge(NesRom rom)
     {
         Console.WriteLine($"Mapper: {rom.mapper.GetType().Name}");
         Console.WriteLine($"PRG size: {rom.PRGDataSize16KB * 16} KiB ({rom.PRGDataSize16KB})");
@@ -67,15 +70,7 @@ public class VirtualSystem
 
         Console.WriteLine($"Entry: ${_cpu.ResetVector:X4}");
     }
-
-
-    public byte Read(ushort address, ReadingAs from = 0) => RomMapper.Read(this, address, from);
-    public void Write(ushort address, byte value, ReadingAs from = 0) => RomMapper.Write(this, address, value, from);
+    
 
 }
-public enum ReadingAs : byte
-{
-    CPU,
-    PPU,
-    None
-}
+

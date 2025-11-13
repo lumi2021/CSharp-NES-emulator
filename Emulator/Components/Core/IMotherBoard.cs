@@ -6,7 +6,7 @@ namespace Emulator.Components.Core;
 public interface IMotherBoard : IPort
 {
 
-    public CPU CpuRef { get; }
+    public Cpu CpuRef { get; }
     public RamMemory MemRef {  get; }
 
 }
