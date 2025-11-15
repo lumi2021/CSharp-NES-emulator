@@ -11,13 +11,14 @@ public class Ppu : Component
     private readonly byte[] _vramNametable0 = new byte[960 + 64];
     private readonly byte[] _vramNametable1 = new byte[960 + 64];
     private readonly byte[] _vramPallete = new byte[32];
+    private readonly byte[,,] _vramChr = new byte[16 * 32, 8, 8];
     private byte[] _vramOam = new byte[256];
 
-    private readonly byte[] _videoOutBuffer = new byte[256 * 240 * 3];
-    private uint _videoOutTexture = 0;
-    private byte[,,] _vramChr = new byte[16 * 32, 8, 8];
-
-    public bool VBlankNMInterrupt = false;
+    private int _cycleCounter = 0;
+    private int _scanlineCounter = 0;
+    private bool _nmiOccurred = false;
+    
+    public bool VBlankNmInterrupt = false;
     public bool IsMaster = false;
     public byte SpriteHeight = 8;
     public byte BackgroundPatternTable = 0;
@@ -29,16 +30,21 @@ public class Ppu : Component
     private byte _oamaddr = 0;
     private byte _oamdata = 0;
 
-    private ushort _currVramAddr = 0;
-    private ushort _tempVramAddr = 0;
+    private ushort _vramAddr = 0;
 
-    private byte _scrollX = 0;
-    private byte _scrollY = 0;
+    private int _nmtbX = 0;
+    private int _nmtbY = 0;
+    private int _scrollX = 0;
+    private int _scrollY = 0;
 
-    private byte _oamdma = 0;
+    private byte _oamDma = 0;
 
-    private bool _wLatch = false;
+    private int _regx = 0;
+    private ushort _regt = 0;
+    private bool _regw = false;
 
+    private uint _backgroundTexHandler = 0;
+    private uint _foregroundTexHandler = 0;
     
     public bool OnVblank
     {
@@ -70,47 +76,57 @@ public class Ppu : Component
 
     private void WritePpuCtrl(byte value)
     {
-        VBlankNMInterrupt = (value & 0b_1000_0000) != 0;
+        VBlankNmInterrupt = (value & 0b_1000_0000) != 0;
         IsMaster = (value & 0b_0100_0000) == 0;
         SpriteHeight = (byte)(((value & 0b_0010_0000) == 0) ? 8 : 16);
         BackgroundPatternTable = (byte)(((value & 0b_0001_0000) == 0) ? 0 : 1);
         SpritePatternTable = (byte)(((value & 0b_0000_1000) == 0) ? 0 : 1);
         IncrementPerRead = (byte)(((value & 0b_0000_0100) == 0) ? 1 : 32);
 
-        _tempVramAddr = (ushort)((_tempVramAddr & 0b_111_00_11_11111111) | ((value & 0b_0000_0011) << 11));
+        _regt = (ushort)((_regt & 0b_111_00_11_111_11111) | ((value & 0b_0000_0011) << 10));
     }
     private void WritePpuScroll(byte value)
     {
-        if (!_wLatch)
+        if (!_regw)
         {
-            _tempVramAddr = (ushort)((_tempVramAddr & 0b_11111111_11100000) | (value >> 3));
-            _scrollX = value; 
+            var coarseX = value >> 3;
+            var fineX = value & 0b111;
+
+            _regx = fineX;
+            _regt = (ushort)((_regt & ~0b0000000000011111) | coarseX);
         }
         else
         {
-            _tempVramAddr = (ushort)((_tempVramAddr * 0b_000_11_00000_11111) | ((value & 0b_00000_111) << 12) | ((value & 0b_11111_000) << 5));
-            _scrollY = value;
-        }
+            var coarseY = value >> 3;
+            var fineY = value & 0b111;
 
-        _wLatch = !_wLatch;
+            _regt &= 0b0000110000011111;
+            _regt |= (ushort)((coarseY & 0b_11111) << 5);
+            _regt |= (ushort)((fineY & 0b_111) << 12);
+
+            UpdateScrollFromRegt();
+        }
+        
+        _regw = !_regw;
     }
     private void WritePpuAddress(byte value)
     {
-        if (!_wLatch)
-        {
-            _tempVramAddr = (ushort)((_tempVramAddr & 0b_00_000000_11111111) | ((value & 0b_00_111111) << 8));
-        }
+        if (!_regw)
+            _regt = (ushort)((_regt & 0b_00_000000_11111111) | ((value & 0b_00_111111) << 8));
+        
         else
         {
-            _tempVramAddr = (ushort)((_tempVramAddr & 0b_00_111111_00000000) | value);
-            _currVramAddr = _tempVramAddr;
+            _regt = (ushort)((_regt & 0b_00_111111_00000000) | value);
+            _vramAddr = _regt;
         }
 
-        _wLatch = !_wLatch;
+        _regw = !_regw;
     }
     private void WritePpuData(byte value)
     {
-        var addr = _currVramAddr;
+        var addr = _vramAddr;
+        _vramAddr += IncrementPerRead;
+        
         switch (addr)
         {
             case >= 0x2000 and < 0x3000: WriteWithNametableMirroring(addr, value); break;
@@ -121,13 +137,13 @@ public class Ppu : Component
             //default: throw new ArgumentOutOfRangeException();
         }
 
-        _currVramAddr += IncrementPerRead;
+        _regw = false;
         _updateNametablesSheet = true;
     }
     private byte ReadPpuData()
     {
-        var addr = _currVramAddr;
-        _currVramAddr += IncrementPerRead;
+        var addr = _vramAddr;
+        _vramAddr += IncrementPerRead;
         
         return addr switch
         {
@@ -153,20 +169,26 @@ public class Ppu : Component
         if(a) _vramNametable0[b] = value;
         else  _vramNametable1[b] = value;
     }
-    private (byte index, byte[] pallete) GetTile(int table, int posx, int posy)
+    private (byte tile, byte paletteIndex) GetTile(int table, int posx, int posy)
     {
-        var tileLinearAddr = (ushort)(0x2000 + table * 1024 + posx + posy * 32);
-        var plttLinearAddr = 0x2000 + table * 1024 + 960 + posx / 4 + posy / 4 * 8;
+        var tileLinearAddr = (ushort)(0x2000 + table * 0x400 + posy * 32 + posx);
+        byte tile = ReadWithNametableMirroring(tileLinearAddr);
         
-        var tile = ReadWithNametableMirroring(tileLinearAddr);
-        byte[] pal = [
-            ReadWithNametableMirroring((ushort)(plttLinearAddr + 0)),
-            ReadWithNametableMirroring((ushort)(plttLinearAddr + 1)),
-            ReadWithNametableMirroring((ushort)(plttLinearAddr + 2)),
-            ReadWithNametableMirroring((ushort)(plttLinearAddr + 3)),
-        ];
+        var attrBase = (ushort)(0x2000 + table * 0x400 + 0x3C0);
+        int attrX = posx >> 2; // 0..7
+        int attrY = posy >> 2; // 0..7
+        int attrOffset = attrY * 8 + attrX;
+        var attrAddr = (ushort)(attrBase + attrOffset);
+
+        byte attr = ReadWithNametableMirroring(attrAddr);
         
-        return (tile, pal);
+        int txInAttr = posx & 0b11; // 0..3
+        int tyInAttr = posy & 0b11; // 0..3
+        int quadrant = (txInAttr >= 2 ? 1 : 0) + (tyInAttr >= 2 ? 2 : 0); // 0..3
+
+        byte paletteIndex = (byte)((attr >> (quadrant * 2)) & 0b11); // 0..3
+
+        return (tile, paletteIndex);
     }
     private (bool nmtb, ushort addr) ProcessNametableMirroring(ushort addr)
     {
@@ -183,7 +205,7 @@ public class Ppu : Component
         // +---+---+
         // 0x3F00 - 0x3F1F | 0x3F20 .. 0x3FFF
 
-        if (rAddr is < 0x2000 or > 0x3000) return (nmtb, (ushort)rAddr);
+        if (rAddr is < 0x2000 or >= 0x3000) return (nmtb, (ushort)rAddr);
         
         var nametableIndex = 0;
             
@@ -211,19 +233,27 @@ public class Ppu : Component
         }
 
         var mirroring = system.Rom.RomData.NametableArrangement;
-        if (mirroring == NametableArrangement.Vertical)
-            nmtb = nametableIndex % 2 == 0;
-        else
-            nmtb = nametableIndex > 1;
+        nmtb = mirroring == NametableArrangement.Vertical
+            ? nametableIndex % 2 == 0
+            : nametableIndex > 1;
 
         return (nmtb, (ushort)rAddr);
     }
     
-    
-    private void CopyOamData(byte hAddr)
+    private (byte r, byte g, byte b) GetColorFromBgPalette(int paletteIndex, int colorIndex)
     {
-        _vramOam = system.Ram.CopyPage(hAddr);
+        int offset = (paletteIndex * 4) + colorIndex; // 0..15
+        offset &= 0x1F;
+        return GetPal(_vramPallete[offset]);
     }
+    private (byte r, byte g, byte b) GetColorFromSpritePalette(int paletteIndex, int colorIndex)
+    {
+        int offset = 0x10 + paletteIndex * 4 + colorIndex; // 0x10..0x1F
+        offset &= 0x1F;
+        return GetPal(_vramPallete[offset]);
+    }
+    
+    private void CopyOamData(byte hAddr) => _vramOam = system.Ram.CopyPage(hAddr);
 
     public Ppu(VirtualSystem mb) : base(mb)
     {
@@ -236,168 +266,188 @@ public class Ppu : Component
 
     public void ResetRomData()
     {
-        LoadSpritesRawData();
-
+        DecodeSpriteSheets();
         UpdateSpriteSheet();
-        UpdateNametablesSheet();
     }
 
     public void Tick()
     {
-        ushort addr = 0;//Convert.ToUInt16(motherBoard.Read(0));
-
-        if ((addr >= 0x2000 && addr <= 0x3FFF) || addr == 0x4014)
+        UpdateForeground();
+        if (_updateNametablesSheet) UpdateBackground();
+        if (VBlankNmInterrupt)
         {
-            byte regIndex = (byte)(addr != 0x4014 ?((addr - 0x2000) % 8) : 14);
-
-            Console.WriteLine($"reading ppu register {regIndex}");
-
+            system.Cpu.RequestNmInterrupt();
+            VBlankNmInterrupt = false;
         }
-
-        Draw();
     }
-
     
-    private void UpdateNametablesSheet()
+    private void UpdateBackground()
     {
-        byte[] buf = new byte[64 * 60 * 8 * 8 * 3];
+        byte[] buf = new byte[512 * 480 * 3];
 
         for (var nametable = 0; nametable < 4; nametable++)
         {
-            for (var tx = 0; tx < 32; tx++) for (var ty = 0; ty < 30; ty++)
+            for (var tx = 0; tx < 32; tx++)
             {
-                var (tile, cidx) = GetTile(BackgroundPatternTable, tx, ty);
-                
-                (byte r, byte g, byte b)[] colors = [
-                    GetPal(cidx[0]),
-                    GetPal(cidx[1]),
-                    GetPal(cidx[2]),
-                    GetPal(cidx[3]),
-                ];
-
-                for (var px = 0; px < 8; px++) for (var py = 0; py < 8; py++)
+                for (var ty = 0; ty < 30; ty++)
                 {
-                    int pixelValue;
-
-                    if (!_showNametablesAttributeTable)
-                        pixelValue = _vramChr[tile, px, py];
-                    else
-                        pixelValue = ((px/4) % 2) + ((py/4) % 2) * 2;
-
-                    var tbx = nametable % 2 != 0 ? 32 : 0;
-                    var tby = nametable >= 2 ? 30 : 0;
-
-                    var pixelIndex = (((tbx + tx) * 8 + px) + ((tby + ty) * 8 + py) * 64 * 8) * 3;
-
-                    buf[pixelIndex + 0] = colors[pixelValue].r;
-                    buf[pixelIndex + 1] = colors[pixelValue].g;
-                    buf[pixelIndex + 2] = colors[pixelValue].b;
-                }
-            }
-        }
-        
-        var gl = Program.gl;
-        gl.BindTexture(TextureTarget.Texture2D, _nametablesSheetHandler);
-        gl.TexImage2D<byte>(TextureTarget.Texture2D, 0, InternalFormat.Rgb, 64 * 8, 60 * 8, 0,
-            PixelFormat.Rgb, PixelType.UnsignedByte, buf);
-    }
-    public void Draw()
-    {
-        // rendering background TODO
-
-        // rendering foreground
-        byte[][] secondaryOam = new byte[8][];
-        for (int py = 0; py < 240; py++)
-        {
-
-            byte[][] tempSecondaryOam = new byte[8][];
-            byte spriteIndex = 0;
-
-            for (var sprite = 0; sprite < 64; sprite++)
-            {
-                var spriteY = _vramOam[sprite * 4];
-                if (spriteY > 0 && spriteY == py) tempSecondaryOam[spriteIndex++] = _vramOam[(sprite * 4)..((sprite + 1) * 4)];
-                if (spriteIndex == 8) break;
-            }
-
-            // draw sprites on secondaryOam Queue
-            foreach (var sprite in secondaryOam)
-            {
-                if (sprite == null) continue;
-
-                byte spriteX = sprite[3];
-
-                byte tileIndex = sprite[1];
-                byte attributes = sprite[2];
-
-                bool flipX = (attributes & 0b_0100_0000) != 0;
-                bool flipY = (attributes & 0b_1000_0000) != 0;
-
-                byte pallete = (byte)(attributes & 0b11);
-
-                int palleteIndex0 = _vramPallete[0x10];
-                int palleteIndex1 = _vramPallete[0x11 + pallete];
-                int palleteIndex2 = _vramPallete[0x12 + pallete];
-                int palleteIndex3 = _vramPallete[0x13 + pallete];
-
-                (byte r, byte g, byte b)[] colors = [
-                    GetPal(palleteIndex0), GetPal(palleteIndex2),
-                    GetPal(palleteIndex1), GetPal(palleteIndex3),
-                ];
-
-                for (int tpx = 0; tpx < 8; tpx++)
-                {
-                    if (spriteX + tpx >= 255) continue;
-
-                    for (int tpy = 0; tpy < 8; tpy++)
+                    var (tile, palIdx) = GetTile(nametable, tx, ty);
+                    
+                    for (var py = 0; py < 8; py++) for (var px = 0; px < 8; px++)
                     {
-                        if (py + tpy >= 240) continue;
+                        int pixelValue = _vramChr[BackgroundPatternTable * 256 + tile, px, py]; // 0..3
+                            
+                        var tbx = (nametable % 2) != 0 ? 32 : 0;
+                        var tby = nametable >= 2 ? 30 : 0;
 
-                        int pixelValue = _vramChr[
-                            tileIndex + (SpritePatternTable == 0 ? 0 : 256),
-                            flipX ? (7 - tpx) : (tpx),
-                            flipY ? (7 - tpy) : (tpy)
-                        ];
-                        if (pixelValue == 0) continue;
-
-                        var pixelIndex = (spriteX + tpx + (py + tpy) * 32 * 8) * 3;
-
-                        _videoOutBuffer[pixelIndex + 0] = colors[pixelValue].r;
-                        _videoOutBuffer[pixelIndex + 1] = colors[pixelValue].g;
-                        _videoOutBuffer[pixelIndex + 2] = colors[pixelValue].b;
-
+                        var x = (tbx + tx) * 8 + px;
+                        var y = (tby + ty) * 8 + py;
+                        var pixelIndex = (y * (64 * 8) + x) * 3;
+                        
+                        if (pixelValue == 0)
+                        {
+                            var c = GetPal(_vramPallete[0]);
+                            buf[pixelIndex + 0] = c.r;
+                            buf[pixelIndex + 1] = c.g;
+                            buf[pixelIndex + 2] = c.b;
+                        }
+                        else
+                        {
+                            var c = GetColorFromBgPalette(palIdx, pixelValue);
+                            buf[pixelIndex + 0] = c.r;
+                            buf[pixelIndex + 1] = c.g;
+                            buf[pixelIndex + 2] = c.b;
+                        }
                     }
                 }
             }
-
-            secondaryOam = tempSecondaryOam;
         }
 
-        UpdateVideo();
-        if (VBlankNMInterrupt) system.Cpu.RequestNmInterrupt();
-    }
-
-    public void UpdateVideo()
-    {
         var gl = Program.gl;
-        gl.BindTexture(TextureTarget.Texture2D, _videoOutTexture);
-        gl.TexImage2D<byte>(TextureTarget.Texture2D, 0, InternalFormat.Rgba, 256, 240, 0,
-            PixelFormat.Rgb, PixelType.UnsignedByte, _videoOutBuffer);
-
-        if (!_updateNametablesSheet) return;
-        
-        UpdateNametablesSheet();
-        _updateNametablesSheet = false;
+        gl.BindTexture(TextureTarget.Texture2D, _backgroundTexHandler);
+        gl.TexImage2D<byte>(TextureTarget.Texture2D, 0, InternalFormat.Rgb, 64 * 8, 60 * 8, 0,
+            PixelFormat.Rgb, PixelType.UnsignedByte, buf);
     }
+    private void UpdateForeground()
+    {
+        var buf = new byte[256 * 240 * 4]; // RGBA
 
+        for (var sprite = 0; sprite < 64; sprite++)
+        {
+            byte y = _vramOam[sprite * 4 + 0];
+            byte tileIndex = _vramOam[sprite * 4 + 1];
+            byte attributes = _vramOam[sprite * 4 + 2];
+            byte x = _vramOam[sprite * 4 + 3];
+
+            int spriteY = y + 1;
+            int spriteX = x;
+            
+            if (y == 0 || spriteY >= 240) continue;
+
+            bool flipX = (attributes & 0b0100_0000) != 0;
+            bool flipY = (attributes & 0b1000_0000) != 0;
+            int palette = attributes & 0b11;
+
+            int height = (SpriteHeight == 16) ? 16 : 8;
+
+
+            for (int py = 0; py < height; py++)
+            {
+                int sy = spriteY + py;
+                if (sy < 0 || sy >= 240) continue;
+
+                for (int px = 0; px < 8; px++)
+                {
+                    int sx = spriteX + px;
+                    if (sx < 0 || sx >= 256) continue;
+
+                    int tx = flipX ? 7 - px : px;
+                    int ty = flipY ? ((height == 16) ? (py < 8 ? 7 - py : 7 - (py - 8)) : 7 - py) : (py % 8);
+
+                    int usedTile;
+                    if (height == 8)
+                    {
+                        usedTile = tileIndex + (SpritePatternTable == 0 ? 0 : 256);
+                    }
+                    else
+                    {
+                        int top = tileIndex & 0xFE;
+                        if (py < 8)
+                            usedTile = top + ( (tileIndex & 1) == 1 ? 256 : 0 );
+                        else
+                            usedTile = top + 1 + ( (tileIndex & 1) == 1 ? 256 : 0 );
+                    }
+
+                    int pixelValue = _vramChr[usedTile, tx, ty];
+                    if (pixelValue == 0) continue;
+                    
+                    var color = GetColorFromSpritePalette(palette, pixelValue);
+
+                    int idx = (sx + sy * 256) * 4;
+                    buf[idx + 0] = color.r;
+                    buf[idx + 1] = color.g;
+                    buf[idx + 2] = color.b;
+                    buf[idx + 3] = 255;
+                }
+            }
+        }
+
+        var gl = Program.gl;
+        gl.BindTexture(TextureTarget.Texture2D, _foregroundTexHandler);
+        gl.TexImage2D<byte>(TextureTarget.Texture2D, 0, InternalFormat.Rgba, 256, 240, 0,
+            PixelFormat.Rgba, PixelType.UnsignedByte, buf);
+    }
+    private void UpdateScrollFromRegt()
+    {
+        // v register layout:
+        // bits 0-4   = coarse X (0..31)
+        // bits 5-9   = coarse Y (0..29)
+        // bit 10     = nametable X (0 or 1)
+        // bit 11     = nametable Y (0 or 1)
+        // bits 12-14 = fine Y (0..7)
+        // fine X is stored separately in _regx
+
+        var coarseX = _regt & 0x1F;                 // bits 0..4
+        var coarseY = (_regt >> 5) & 0x1F;          // bits 5..9
+        var nametableX = (_regt >> 10) & 0x1;       // bit 10
+        var nametableY = (_regt >> 11) & 0x1;       // bit 11
+        var fineY = (_regt >> 12) & 0x7;            // bits 12..14
+        var fineX = _regx & 0x7;
+        
+        
+        // each nametable is 32x30 tiles (256x240 pixels)
+        _scrollX = coarseX * 8 + fineX;   // 0..511
+        _scrollY = coarseY * 8 + fineY;   // 0..479
+        _nmtbX = nametableX;
+        _nmtbY = nametableY;
+
+        if (_scrollY >= 200)
+        {
+            
+        }
+        
+        //Console.WriteLine($"Scroll update: {_scrollX:D3} {_nmtbX} {_scrollY:D3} {_nmtbY}");
+    }
+    
     public byte ReadRegister(ushort addr)
     {
         int regIndex = (addr - 0x2000) % 8;
         switch (regIndex) {
         
-            case 2: _wLatch = false; return _ppustat;
-            case 4: return _oamdata;
-            case 7: return ReadPpuData();
+            case 2:
+                _regw = false;
+                
+                var temps = _ppustat;
+                if (_nmiOccurred) temps |= 0x80;
+                _nmiOccurred = false;
+                return temps;
+            
+            
+            case 4:
+                return _oamdata;
+            
+            case 7:
+                return ReadPpuData();
 
             default:
                 Console.WriteLine($"PPU Register {regIndex} is not readable!");
@@ -415,7 +465,7 @@ public class Ppu : Component
             return;
         }
 
-        int regIndex = (addr - 0x2000) % 8;
+        var regIndex = (addr - 0x2000) % 8;
         switch (regIndex)
         {
             case 0: WritePpuCtrl(data); break;
@@ -440,7 +490,6 @@ public class Ppu : Component
     private int _palleteIndexA = 1;
     private int _palleteIndexB = 17;
     private int _palleteIndexC = 2;
-    private uint _nametablesSheetHandler = 0;
     private bool _showNametablesAttributeTable = false;
     private bool _updateNametablesSheet = false;
 
@@ -448,9 +497,11 @@ public class Ppu : Component
     {
         ImGui.Begin("PPU Debug");
         {
-            ImGui.SeparatorText("Control:");;
+            ImGui.SeparatorText("Control:");
 
-            if (VBlankNMInterrupt) ImGui.Text("NMI enabled"); else ImGui.TextDisabled("NMI Disabled");
+            if (VBlankNmInterrupt) ImGui.Text("NMI enabled"); else ImGui.TextDisabled("NMI Disabled"); ImGui.SameLine();
+            if (OnVblank) ImGui.Text("VBlank"); else ImGui.TextDisabled("VBlank"); ImGui.SameLine();
+            if (_nmiOccurred) ImGui.Text("Occurred"); else ImGui.TextDisabled("Occurred");
             if (IsMaster) ImGui.Text("PPU Master"); else ImGui.TextDisabled("PPU Slave");
 
             ImGui.TextDisabled("Sprite size:"); ImGui.SameLine();
@@ -470,15 +521,42 @@ public class Ppu : Component
 
             ImGui.SeparatorText("Data:");
             ImGui.TextDisabled("Temp Addr:"); ImGui.SameLine();
-            ImGui.Text($"${_tempVramAddr:X4} ({_tempVramAddr:b16})");
+            ImGui.Text($"${_regt:X4} ({_regt:b16})");
             ImGui.TextDisabled("Data Addr:"); ImGui.SameLine();
-            ImGui.Text($"${_currVramAddr:X4} ({_currVramAddr:b16})");
+            ImGui.Text($"${_vramAddr:X4} ({_vramAddr:b16})");
 
             ImGui.SeparatorText("Scroll:");
-            ImGui.TextDisabled("X scroll:"); ImGui.SameLine();
-            ImGui.Text($"{_scrollX}");
-            ImGui.TextDisabled("Y scroll:"); ImGui.SameLine();
-            ImGui.Text($"{_scrollY}");
+
+            if (ImGui.BeginTable("CPU controls", 2))
+            {
+
+                ImGui.TableNextColumn();
+                ImGui.TextDisabled("X scroll:"); ImGui.SameLine();
+                ImGui.Text($"{_scrollX}");
+                
+                ImGui.TableNextColumn();
+                ImGui.TextDisabled("X table:"); ImGui.SameLine();
+                ImGui.Text($"{_nmtbX}");
+                
+                ImGui.TableNextColumn();
+                ImGui.TextDisabled("Y scroll:"); ImGui.SameLine();
+                ImGui.Text($"{_scrollY}");
+                
+                ImGui.TableNextColumn();
+                ImGui.TextDisabled("Y table:"); ImGui.SameLine();
+                ImGui.Text($"{_nmtbY}");
+                
+                ImGui.EndTable();
+            }
+
+            
+            ImGui.SeparatorText("Internal:");
+            
+            ImGui.TextDisabled("Cycle Counter:"); ImGui.SameLine();
+            ImGui.Text($"{_cycleCounter}");
+            
+            ImGui.TextDisabled("Scanline:"); ImGui.SameLine();
+            ImGui.Text($"{_scanlineCounter}");
         }
         ImGui.End();
 
@@ -545,11 +623,14 @@ public class Ppu : Component
 
             var cp = ImGui.GetCursorScreenPos();
 
-            ImGui.Image((nint)_nametablesSheetHandler, finalSize);
+            ImGui.Image((nint)_backgroundTexHandler, finalSize);
 
+            int camX = _scrollX + _nmtbX * 256;
+            int camY = _scrollY + _nmtbY * 240;
+            
             drawList.AddRect(
-                cp + (new Vector2(_scrollX * scale, _scrollY * scale)),
-                cp + (new Vector2((_scrollX + 256) * scale, (_scrollY + 240) * scale)),
+                cp + (new Vector2(camX * scale, camY * scale)),
+                cp + (new Vector2((camX + 256) * scale, (camY + 240) * scale)),
                 ImGui.GetColorU32(new Vector4(1f, 0f, 0f, 1f))
             );
 
@@ -580,6 +661,9 @@ public class Ppu : Component
             }
             
             ImGui.SeparatorText("Sprites");
+            
+            ImGui.Image((nint)_foregroundTexHandler, finalSize);
+            
             for (var i = 0; i < 16; i++)
             {
                 ImGui.TextDisabled($"{0x00 + i * 4:X3}:"); ImGui.SameLine();
@@ -634,8 +718,10 @@ public class Ppu : Component
     private void RenderGame()
     {
         ImGui.Begin("Video Out");
+        var drawList = ImGui.GetWindowDrawList();
 
         Vector2 viewSize = ImGui.GetContentRegionAvail();
+        Vector2 cursorPos = ImGui.GetCursorScreenPos();
         Vector2 renderRes = new(256, 240);
 
         float canvasAspectRatio = viewSize.X / viewSize.Y;
@@ -645,8 +731,28 @@ public class Ppu : Component
             ? new Vector2(viewSize.X, viewSize.X / imageAspectRatio)
             : new Vector2(viewSize.Y * imageAspectRatio, viewSize.Y);
 
-        ImGui.Image((nint)_videoOutTexture, finalSize);
+        int camX = _scrollX + _nmtbX * 256;
+        int camY = _scrollY + _nmtbY * 240;
+        
+        Vector2 bgSize = new(512, 480); // 2x nametables
+        Vector2 scrollUV = new Vector2(camX % 512, camY % 480) / bgSize;
+        
+        Vector2 uv0 = scrollUV;
+        Vector2 uv1 = scrollUV + renderRes / bgSize;
+        
+        drawList.AddImage(
+            (nint)_backgroundTexHandler,
+            cursorPos,
+            cursorPos + finalSize,
+            uv0, uv1);
 
+        drawList.AddImage(
+            (nint)_foregroundTexHandler,
+            cursorPos,
+            cursorPos + finalSize,
+            new Vector2(0, 0),
+            new Vector2(1, 1));
+        
         ImGui.End();
     }
 
@@ -655,8 +761,8 @@ public class Ppu : Component
         var gl = Program.gl;
         _spriteSheetHandlerLeft = gl.GenTexture();
         _spriteSheetHandlerRight = gl.GenTexture();
-        _nametablesSheetHandler = gl.GenTexture();
-        _videoOutTexture = gl.GenTexture();
+        _backgroundTexHandler = gl.GenTexture();
+        _foregroundTexHandler = gl.GenTexture();
 
         gl.BindTexture(TextureTarget.Texture2D, _spriteSheetHandlerLeft);
         gl.TexParameterI(GLEnum.Texture2D, GLEnum.TextureWrapS, in _texWrapMode);
@@ -670,13 +776,13 @@ public class Ppu : Component
         gl.TexParameterI(GLEnum.Texture2D, GLEnum.TextureMinFilter, in _texMinFilter);
         gl.TexParameterI(GLEnum.Texture2D, GLEnum.TextureMagFilter, in _texMagFilter);
 
-        gl.BindTexture(TextureTarget.Texture2D, _nametablesSheetHandler);
+        gl.BindTexture(TextureTarget.Texture2D, _backgroundTexHandler);
         gl.TexParameterI(GLEnum.Texture2D, GLEnum.TextureWrapS, in _texWrapMode);
         gl.TexParameterI(GLEnum.Texture2D, GLEnum.TextureWrapT, in _texWrapMode);
         gl.TexParameterI(GLEnum.Texture2D, GLEnum.TextureMinFilter, in _texMinFilter);
         gl.TexParameterI(GLEnum.Texture2D, GLEnum.TextureMagFilter, in _texMagFilter);
         
-        gl.BindTexture(TextureTarget.Texture2D, _videoOutTexture);
+        gl.BindTexture(TextureTarget.Texture2D, _foregroundTexHandler);
         gl.TexParameterI(GLEnum.Texture2D, GLEnum.TextureWrapS, in _texWrapMode);
         gl.TexParameterI(GLEnum.Texture2D, GLEnum.TextureWrapT, in _texWrapMode);
         gl.TexParameterI(GLEnum.Texture2D, GLEnum.TextureMinFilter, in _texMinFilter);
@@ -698,26 +804,24 @@ public class Ppu : Component
             PixelFormat.Rgb, PixelType.UnsignedByte, imageDataRIght);
     }
     
-    private void LoadSpritesRawData()
+    private void DecodeSpriteSheets()
     {
-        for (var tx = 0; tx < 16; tx++)
+        var chr = system.Rom.RomData.ChrData;
+        var tiles = chr.Length / 16;
+        
+        for (var t = 0; t < tiles && t < (16 * 32); t++)
         {
-            for (var ty = 0; ty < 32; ty++)
+            for (var row = 0; row < 8; row++)
             {
-                int tileIndex = tx + ty * 16;
-
-                for (var sl = 0; sl < 8; sl++)
+                var b0 = chr[t * 16 + row];       // bitplane 0
+                var b1 = chr[t * 16 + 8 + row];   // bitplane 1
+                
+                for (var col = 0; col < 8; col++)
                 {
-                    byte sl1 = Read(tileIndex * 16 + sl);
-                    byte sl2 = Read(tileIndex * 16 + 8 + sl);
-
-                    for (var sc = 7; sc >= 0; sc--)
-                    {
-                        int pixelValue = (((sl1 >> sc) & 1) << 1) | (((sl2 >> sc) & 1));
-                        _vramChr[tx + ty * 16, 7 - sc, sl] = (byte)pixelValue;
-                    }
+                    var bit = 7 - col;
+                    var pv = ((b0 >> bit) & 1) | (((b1 >> bit) & 1) << 1);
+                    _vramChr[t, col, row] = (byte)pv;
                 }
-
             }
         }
     }
@@ -759,8 +863,6 @@ public class Ppu : Component
 
         return imageData;
     }
-
-    private byte Read(int addr) => system.Bus.PpuRead((ushort)addr);
-    private void Write(int addr, byte val) => system.Bus.PpuWrite((ushort)addr, val);
-    private (byte r, byte g, byte b) GetPal(int index) => palletes[index & 0b111111];
+    
+    private (byte r, byte g, byte b) GetPal(int index) => palletes[index & 0b00_111111];
 }

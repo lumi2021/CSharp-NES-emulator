@@ -10,20 +10,36 @@ public class Bus(VirtualSystem sys): Component(sys)
     
     public byte CpuRead(ushort address)
     {
-        _cpuLast = address switch
+        switch (address)
         {
-            < 0x2000 => sys.Ram.Read(address),
-            >= 0x2000 and < 0x4000 => sys.Ppu.ReadRegister(address),
+            case < 0x2000:
+                _cpuLast = sys.Ram.Read(address);
+                break;
             
-            0x4015 => sys.Apu.ReadStatus(),
+            case < 0x4000 or 0x4014:
+                _cpuLast = sys.Ppu.ReadRegister(address);
+                break;
             
-            0x4016 => sys.Joy1.InputBitRegister,
-            0x4017 => 0, //sys.Joy2.InputBitRegister,
+            case 0x4015:
+                _cpuLast = sys.Apu.ReadStatus();
+                break;
             
-            >= 0x4020 => sys.RomMapper.CpuRead(system, address),
+            case 0x4016:
+                _cpuLast = sys.Joy1.InputBitRegister;
+                break;
             
-            _ => _cpuLast,
-        };
+            case 0x4017:
+                _cpuLast = 0; //sys.Joy2.InputBitRegister,
+                break;
+            
+            case >= 0x4020:
+                _cpuLast = sys.RomMapper.CpuRead(address);
+                break;
+            
+            default:
+                Console.WriteLine($"Invalid read address {address:x4}");
+                break;
+        }
 
         return _cpuLast;
     }
@@ -37,6 +53,7 @@ public class Bus(VirtualSystem sys): Component(sys)
             case < 0x4000: sys.Ppu.WriteRegister(address, value); break;
             
             case <= 0x4013: system.Apu.Write(address, value); break;
+            case 0x4014: sys.Ppu.WriteRegister(address, value); break;
             case 0x4015: system.Apu.Write(address, value); break;
             
             case 0x4016:
@@ -44,10 +61,18 @@ public class Bus(VirtualSystem sys): Component(sys)
                 //sys.Joy2.Mode = value == 0 ? JoyControllerMode.Read : JoyControllerMode.Write;
                 break;
             
-            case >= 0x4020: sys.RomMapper.CpuWrite(system, address, value); break;
+            case 0x4017:
+                sys.Apu.Write(address, value);
+                break;
+            
+            case >= 0x4020: sys.RomMapper.CpuWrite(address, value); break;
+            
+            default:
+                Console.WriteLine($"Invalid write address {address:x4}");
+                break;
         }
     }
 
-    public byte PpuRead(ushort address) => sys.RomMapper.PpuRead(system, address);
-    public void PpuWrite(ushort address, byte value) => sys.RomMapper.PpuWrite(system, address, value);
+    public byte PpuRead(ushort address) => sys.RomMapper.PpuRead(address);
+    public void PpuWrite(ushort address, byte value) => sys.RomMapper.PpuWrite(address, value);
 }
