@@ -54,11 +54,9 @@ public class Cpu : Component
 
     private ushort StackAddress => (ushort)(0x0100 + stackPointer);
 
-    private bool paused = true;
+    public bool paused = true;
     public bool doStep = false;
     
-    private bool _executionHistoryUpdated = false;
-
     public int clockCount = 0;
 
     public ushort ResetVector => MemReadWord(0xFFFC);
@@ -77,18 +75,18 @@ public class Cpu : Component
     }
     public void RequestNmInterrupt()
     {
-        if (paused) return;
-
         Push(progCounter);
         Push(flags);
+        Interrupt = true;
         SetProgramCounter(NonMaskableInterrupt);
-        //system.Ppu.VBlankNMInterrupt = false;
-        //paused = true;
     }
     public void RequestInterrupt()
     {
+        if (Interrupt) return;
+        
         Push(progCounter);
         Push(flags);
+        Interrupt = true;
         SetProgramCounter(InterruptRequest);
     }
     public void RequestBreak()
@@ -98,39 +96,30 @@ public class Cpu : Component
         Push(flags);
         Interrupt = true;
         SetProgramCounter(InterruptRequest);
+        
+        Console.WriteLine("Break");
     }
 
 
     public void Tick()
     {
+        clockCount = 0;
+        
         if (paused)
         {
             if (!doStep) return;
             doStep = false;
         }
 
-        byte opCode = ReadCounter();
-
+        var opCode = ReadCounter();
         var (operation, mode) = DecodeOpCode(opCode);
-
-        //_lastExecutedInstructions.Add(new ExecutionFrame(
-        //    (ushort)(progCounter - 1),
-        //    operation, mode, flags
-        //));
-        //if (_lastExecutedInstructions.Count >= 60)
-        //{
-        //    _lastExecutedInstructions.RemoveRange(0, _lastExecutedInstructions.Count - 60);
-        //}
-        //_executionHistoryUpdated = true;
-
+        
+        //Console.WriteLine($"{opCode} {operation} {mode}");
         Execute(operation, mode);
     }
 
     private void Execute(Operation op, AddressMode mode)
     {
-        // clock counting is cleared before the execution
-        clockCount = 0;
-
         switch (op)
         {
             case Operation.Brk: {
@@ -448,9 +437,7 @@ public class Cpu : Component
                     Negative = (accumulator & (byte)SF.Negative) != 0;
                     Zero = accumulator == 0;
                 } break;
-            case Operation.Plp: {
-                    flags = (byte)(Pop() & 0b_11_00_1111);
-                } break;
+            case Operation.Plp: flags = (byte)(Pop() & 0b_11_00_1111); break;
                      
             case Operation.Sec: Carry = true; break;
             case Operation.Sed: Decimal = true; break;
@@ -515,7 +502,6 @@ public class Cpu : Component
                 } break;
             
             case Operation.Anc2:
-                goto case Operation.Anc;
             case Operation.Anc: {
                     accumulator &= GetValue(mode);
 
@@ -1037,6 +1023,11 @@ public class Cpu : Component
             if (ImGui.Button("Reset", new(-1, 20))) Reset();
 
             ImGui.EndTable();
+            
+            ImGui.SeparatorText("Internal:");
+            ImGui.TextDisabled("Instruction Clock Count:"); ImGui.SameLine();
+            ImGui.Text($"{clockCount}");
+            
         }
         ImGui.End();
     }
@@ -1072,15 +1063,15 @@ public class Cpu : Component
 
     public void Push(byte val)
     {
-        system.Bus.CpuWrite(StackAddress, val);
+        MemWrite(StackAddress, val);
         stackPointer--;
     }
     public void Push(ushort val)
     {
         var b = BitConverter.GetBytes(val);
-        system.Bus.CpuWrite(StackAddress, b[1]);
+        MemWrite(StackAddress, b[1]);
         stackPointer--;
-        system.Bus.CpuWrite(StackAddress, b[0]);
+        MemWrite(StackAddress, b[0]);
         stackPointer--;
     }
 
@@ -1101,6 +1092,7 @@ public class Cpu : Component
 
     public byte ReadCounter()
     {
+        clockCount++;
         return system.Bus.CpuRead(progCounter++);
     }
     public ushort ReadCounterWord()

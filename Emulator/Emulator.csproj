@@ -5,6 +5,7 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -12,6 +13,7 @@
     <PackageReference Include="Silk.NET.Core" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Input" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Maths" Version="2.22.0" />
+    <PackageReference Include="Silk.NET.OpenAL" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenGL" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenGL.Extensions.ImGui" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Windowing" Version="2.22.0" />
@@ -21,7 +23,7 @@
 
   <ItemGroup>
     <None Update="ROMs\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 

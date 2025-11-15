@@ -1,4 +1,5 @@
-﻿using Emulator.Components.Storage;
+﻿using System.Diagnostics;
+using Emulator.Components.Storage;
 using Emulator.Mappers;
 
 namespace Emulator.Components;
@@ -39,23 +40,39 @@ public class VirtualSystem
     }
 
 
-    public void Process()
+    public void Process(double delta)
     {
-        for (var i = 0; i < 1516; i++)
+        var todoClocks = Math.Min(8000, delta * 1_789_773.0);
+        
+        var restingClocks = (int)(todoClocks * 0.92);
+        while ((!_cpu.paused || _cpu.doStep) && restingClocks > 0)
+        {
             _cpu.Tick();
+            _apu.Tick();
+            
+            restingClocks -= _cpu.clockCount;
+        }
+        
+        _ppu.OnVblank = true;
+        _ppu.Tick();
+        
+        restingClocks = (int)(todoClocks * 0.08);
+        while ((!_cpu.paused || _cpu.doStep) && restingClocks > 0)
+        {
+            _cpu.Tick();
+            _apu.Tick();
+            
+            restingClocks -= _cpu.clockCount;
+        }
+        
+        _ppu.OnVblank = false;
     }
+
     public void Draw()
     {
-        _ppu.OnVblank = false;
-
-        //for (var i = 0; i < 758; i++)
-        //    _cpu.Tick();
-
-        _ppu.OnVblank = true;
-        _ppu.Draw();
+        
     }
-
-
+    
     public void InsertCartriadge(NesRom rom)
     {
         Console.WriteLine($"Mapper: {rom.mapper.GetType().Name}");

@@ -57,6 +57,8 @@ public class NesRom
         b += dl;
 
         mapper = GetMapper((byte)((header[6] >> 4) | (header[7] & 0xF0)), this);
+        
+        //Console.WriteLine(string.Join(' ', PrgData.Select(e => $"{e:x2}")));
     }
 
     private static Mapper GetMapper(byte mapper, NesRom parent)
