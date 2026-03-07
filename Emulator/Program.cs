@@ -65,7 +65,7 @@ public static class Program
 
         _system = new VirtualSystem();
 
-        _system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Super Mario Bros.nes"));
+        //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Super Mario Bros.nes"));
         //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Super Mario Bros 3.nes"));
         //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Tetris.nes"));
         //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Donkey Kong.nes"));
@@ -73,7 +73,7 @@ public static class Program
         //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/snow.nes"));
         //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Thwaite.nes"));
         //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Pac-Man.nes"));
-        //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Ice Climber.nes"));
+        _system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Ice Climber.nes"));
     }
     private static void OnClose()
     {

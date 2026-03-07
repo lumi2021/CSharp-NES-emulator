@@ -51,6 +51,11 @@ public class Ppu : Component
         get => (_ppustat & 0b_1000_0000) != 0;
         set => _ppustat = (byte)((_ppustat & ~0b_1000_0000) | (value ? 0b_1000_0000 : 0));
     }
+    public bool Sprite0Hit
+    {
+        get => (_ppustat & 0b_0100_0000) != 0;
+        set => _ppustat = (byte)((_ppustat & ~0b_0100_0000) | (value ? 0b_0100_0000 : 0));
+    }
 
     #region SilkNet shit
     private int _texWrapMode = (int)TextureWrapMode.Repeat;
@@ -58,20 +63,26 @@ public class Ppu : Component
     private int _texMagFilter = (int)TextureMagFilter.Nearest;
     #endregion
 
-    private (byte r, byte g, byte b)[] palletes = [
-        (0x80, 0x80, 0x80), (0x00, 0x3D, 0xA6), (0x00, 0x12, 0xB0), (0x44, 0x00, 0x96), (0xA1, 0x00, 0x5E),
-        (0xC7, 0x00, 0x28), (0xBA, 0x06, 0x00), (0x8C, 0x17, 0x00), (0x5C, 0x2F, 0x00), (0x10, 0x45, 0x00),
-        (0x05, 0x4A, 0x00), (0x00, 0x47, 0x2E), (0x00, 0x41, 0x66), (0x00, 0x00, 0x00), (0x05, 0x05, 0x05),
-        (0x05, 0x05, 0x05), (0xC7, 0xC7, 0xC7), (0x00, 0x77, 0xFF), (0x21, 0x55, 0xFF), (0x82, 0x37, 0xFA),
-        (0xEB, 0x2F, 0xB5), (0xFF, 0x29, 0x50), (0xFF, 0x22, 0x00), (0xD6, 0x32, 0x00), (0xC4, 0x62, 0x00),
-        (0x35, 0x80, 0x00), (0x05, 0x8F, 0x00), (0x00, 0x8A, 0x55), (0x00, 0x99, 0xCC), (0x21, 0x21, 0x21),
-        (0x09, 0x09, 0x09), (0x09, 0x09, 0x09), (0xFF, 0xFF, 0xFF), (0x0F, 0xD7, 0xFF), (0x69, 0xA2, 0xFF),
-        (0xD4, 0x80, 0xFF), (0xFF, 0x45, 0xF3), (0xFF, 0x61, 0x8B), (0xFF, 0x88, 0x33), (0xFF, 0x9C, 0x12),
-        (0xFA, 0xBC, 0x20), (0x9F, 0xE3, 0x0E), (0x2B, 0xF0, 0x35), (0x0C, 0xF0, 0xA4), (0x05, 0xFB, 0xFF),
-        (0x5E, 0x5E, 0x5E), (0x0D, 0x0D, 0x0D), (0x0D, 0x0D, 0x0D), (0xFF, 0xFF, 0xFF), (0xA6, 0xFC, 0xFF),
-        (0xB3, 0xEC, 0xFF), (0xDA, 0xAB, 0xEB), (0xFF, 0xA8, 0xF9), (0xFF, 0xAB, 0xB3), (0xFF, 0xD2, 0xB0),
-        (0xFF, 0xEF, 0xA6), (0xFF, 0xF7, 0x9C), (0xD7, 0xE8, 0x95), (0xA6, 0xED, 0xAF), (0xA2, 0xF2, 0xDA),
-        (0x99, 0xFF, 0xFC), (0xDD, 0xDD, 0xDD), (0x11, 0x11, 0x11), (0x11, 0x11, 0x11)
+    static readonly (byte r, byte g, byte b)[] palletes = [
+        (0x62,0x62,0x62), (0x00,0x1C,0x95), (0x19,0x04,0xAC), (0x42,0x00,0x9D),
+        (0x61,0x00,0x6B), (0x6E,0x00,0x25), (0x65,0x05,0x00), (0x49,0x1E,0x00),
+        (0x22,0x37,0x00), (0x00,0x49,0x00), (0x00,0x4F,0x00), (0x00,0x48,0x16),
+        (0x00,0x35,0x5E), (0x00,0x00,0x00), (0x00,0x00,0x00), (0x00,0x00,0x00),
+
+        (0xAB,0xAB,0xAB), (0x0C,0x4E,0xDB), (0x3D,0x2E,0xFF), (0x71,0x15,0xF3),
+        (0x9B,0x0B,0xB9), (0xB0,0x12,0x62), (0xA9,0x27,0x04), (0x89,0x46,0x00),
+        (0x57,0x66,0x00), (0x23,0x7F,0x00), (0x00,0x89,0x00), (0x00,0x83,0x32),
+        (0x00,0x6D,0x90), (0x00,0x00,0x00), (0x00,0x00,0x00), (0x00,0x00,0x00),
+
+        (0xFF,0xFF,0xFF), (0x57,0xA5,0xFF), (0x82,0x87,0xFF), (0xB4,0x6D,0xFF),
+        (0xDF,0x60,0xFF), (0xF8,0x63,0xC6), (0xF8,0x74,0x6D), (0xDE,0x90,0x20),
+        (0xB3,0xAE,0x00), (0x81,0xC8,0x00), (0x56,0xD5,0x22), (0x3D,0xD3,0x6F),
+        (0x3E,0xC1,0xC8), (0x4E,0x4E,0x4E), (0x00,0x00,0x00), (0x00,0x00,0x00),
+
+        (0xFF,0xFF,0xFF), (0xBE,0xE0,0xFF), (0xCD,0xD4,0xFF), (0xE0,0xCA,0xFF),
+        (0xF1,0xC4,0xFF), (0xFC,0xC4,0xEF), (0xFD,0xCA,0xCE), (0xF5,0xD4,0xAF),
+        (0xE6,0xDF,0x9C), (0xD3,0xE9,0x9A), (0xC2,0xEF,0xA8), (0xB7,0xEF,0xC4),
+        (0xB6,0xEA,0xE5), (0xB8,0xB8,0xB8), (0x00,0x00,0x00), (0x00,0x00,0x00),
     ];
 
     private void WritePpuCtrl(byte value)
@@ -100,11 +111,9 @@ public class Ppu : Component
             var coarseY = value >> 3;
             var fineY = value & 0b111;
 
-            _regt &= 0b0000110000011111;
+            _regt = (ushort)((_regt & ~0x73E0) | ((coarseY & 0x1F) << 5) | ((fineY & 0x07) << 12));
             _regt |= (ushort)((coarseY & 0b_11111) << 5);
             _regt |= (ushort)((fineY & 0b_111) << 12);
-
-            UpdateScrollFromRegt();
         }
         
         _regw = !_regw;
@@ -192,52 +201,15 @@ public class Ppu : Component
     }
     private (bool nmtb, ushort addr) ProcessNametableMirroring(ushort addr)
     {
-        int rAddr = addr;
-        bool nmtb = false;
-
-        // solve odd mirroring addresses
-        //if (gAddr < 0x2000) gAddr += 0x2000;
-
-        // +---+---+
-        // | 0 | 1 | 0x2000 0x2400
-        // +---+---+
-        // | 2 | 3 | 0x2800 0x2C00
-        // +---+---+
-        // 0x3F00 - 0x3F1F | 0x3F20 .. 0x3FFF
-
-        if (rAddr is < 0x2000 or >= 0x3000) return (nmtb, (ushort)rAddr);
-        
-        var nametableIndex = 0;
-            
-        switch (rAddr)
+        var isHorizontal = system.Rom.RomData.NametableArrangement == NametableArrangement.Horizontal;
+        return addr switch
         {
-            case < 0x2400:
-                nametableIndex = 0;
-                rAddr -= 0x2000;
-                break;
-                
-            case < 0x2800:
-                nametableIndex = 1;
-                rAddr -= 0x2400;
-                break;
-                
-            case < 0x2C00:
-                nametableIndex = 2;
-                rAddr -= 0x2800;
-                break;
-                
-            case < 0x3000:
-                nametableIndex = 3;
-                rAddr -= 0x2C00;
-                break;
-        }
-
-        var mirroring = system.Rom.RomData.NametableArrangement;
-        nmtb = mirroring == NametableArrangement.Vertical
-            ? nametableIndex % 2 == 0
-            : nametableIndex > 1;
-
-        return (nmtb, (ushort)rAddr);
+            < 0x2400 => (false, (ushort)(addr - 0x2000)),
+            < 0x2800 => (!isHorizontal, (ushort)(addr - 0x2400)),
+            < 0x2C00 => (isHorizontal, (ushort)(addr - 0x2800)),
+            < 0x3000 => (true, (ushort)(addr - 0x2C00)),
+            _ => throw new Exception()
+        };
     }
     
     private (byte r, byte g, byte b) GetColorFromBgPalette(int paletteIndex, int colorIndex)
@@ -274,11 +246,10 @@ public class Ppu : Component
     {
         UpdateForeground();
         if (_updateNametablesSheet) UpdateBackground();
-        if (VBlankNmInterrupt)
-        {
-            system.Cpu.RequestNmInterrupt();
-            VBlankNmInterrupt = false;
-        }
+        if (!VBlankNmInterrupt) return;
+        UpdateScrollFromRegt();
+        system.Cpu.RequestNmInterrupt();
+        VBlankNmInterrupt = false;
     }
     
     private void UpdateBackground()
@@ -293,12 +264,12 @@ public class Ppu : Component
                 {
                     var (tile, palIdx) = GetTile(nametable, tx, ty);
                     
+                    var tbx = (nametable % 2) != 0 ? 32 : 0;
+                    var tby = nametable >= 2 ? 30 : 0;
+                    
                     for (var py = 0; py < 8; py++) for (var px = 0; px < 8; px++)
                     {
                         int pixelValue = _vramChr[BackgroundPatternTable * 256 + tile, px, py]; // 0..3
-                            
-                        var tbx = (nametable % 2) != 0 ? 32 : 0;
-                        var tby = nametable >= 2 ? 30 : 0;
 
                         var x = (tbx + tx) * 8 + px;
                         var y = (tby + ty) * 8 + py;
@@ -325,7 +296,7 @@ public class Ppu : Component
 
         var gl = Program.gl;
         gl.BindTexture(TextureTarget.Texture2D, _backgroundTexHandler);
-        gl.TexImage2D<byte>(TextureTarget.Texture2D, 0, InternalFormat.Rgb, 64 * 8, 60 * 8, 0,
+        gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgb, 64 * 8, 60 * 8, 0,
             PixelFormat.Rgb, PixelType.UnsignedByte, buf);
     }
     private void UpdateForeground()
@@ -379,10 +350,16 @@ public class Ppu : Component
                     }
 
                     int pixelValue = _vramChr[usedTile, tx, ty];
-                    if (pixelValue == 0) continue;
+                    if (pixelValue == 0)
+                    {
+                        if (sprite == 0 && !Sprite0Hit)
+                        {
+                        
+                        }
+                        continue;
+                    }
                     
                     var color = GetColorFromSpritePalette(palette, pixelValue);
-
                     int idx = (sx + sy * 256) * 4;
                     buf[idx + 0] = color.r;
                     buf[idx + 1] = color.g;
@@ -407,31 +384,31 @@ public class Ppu : Component
         // bits 12-14 = fine Y (0..7)
         // fine X is stored separately in _regx
 
-        var coarseX = _regt & 0x1F;                 // bits 0..4
-        var coarseY = (_regt >> 5) & 0x1F;          // bits 5..9
-        var nametableX = (_regt >> 10) & 0x1;       // bit 10
-        var nametableY = (_regt >> 11) & 0x1;       // bit 11
-        var fineY = (_regt >> 12) & 0x7;            // bits 12..14
+        var coarseX = _regt & 0x1F;
+        var coarseY = (_regt >> 5) & 0x1F;
+        var nametableX = (_regt >> 10) & 0x1;
+        var nametableY = (_regt >> 11) & 0x1;
+        var fineY = (_regt >> 12) & 0x7;
         var fineX = _regx & 0x7;
         
+        if (coarseY >= 30)
+        {
+            coarseY -= 30;
+            nametableY ^= 1;
+        }
         
-        // each nametable is 32x30 tiles (256x240 pixels)
-        _scrollX = coarseX * 8 + fineX;   // 0..511
-        _scrollY = coarseY * 8 + fineY;   // 0..479
+        _scrollX = (coarseX * 8 + fineX) & 0x1FF;
+        _scrollY = coarseY * 8 + fineY;
+
         _nmtbX = nametableX;
         _nmtbY = nametableY;
 
-        if (_scrollY >= 200)
-        {
-            
-        }
-        
         //Console.WriteLine($"Scroll update: {_scrollX:D3} {_nmtbX} {_scrollY:D3} {_nmtbY}");
     }
     
     public byte ReadRegister(ushort addr)
     {
-        int regIndex = (addr - 0x2000) % 8;
+        int regIndex = (addr - 0x2000) & 7;
         switch (regIndex) {
         
             case 2:
@@ -465,7 +442,7 @@ public class Ppu : Component
             return;
         }
 
-        var regIndex = (addr - 0x2000) % 8;
+        var regIndex = (addr - 0x2000) & 7;
         switch (regIndex)
         {
             case 0: WritePpuCtrl(data); break;
@@ -483,6 +460,7 @@ public class Ppu : Component
         };
     }
 
+    
     // debug shit
     private uint _spriteSheetHandlerLeft = 0;
     private uint _spriteSheetHandlerRight = 0;
@@ -717,9 +695,9 @@ public class Ppu : Component
     }
     private void RenderGame()
     {
-        ImGui.Begin("Video Out");
+       ImGui.Begin("Video Out");
         var drawList = ImGui.GetWindowDrawList();
-
+        
         Vector2 viewSize = ImGui.GetContentRegionAvail();
         Vector2 cursorPos = ImGui.GetCursorScreenPos();
         Vector2 renderRes = new(256, 240);
@@ -728,8 +706,8 @@ public class Ppu : Component
         float imageAspectRatio = renderRes.X / renderRes.Y;
 
         Vector2 finalSize = (canvasAspectRatio < imageAspectRatio)
-            ? new Vector2(viewSize.X, viewSize.X / imageAspectRatio)
-            : new Vector2(viewSize.Y * imageAspectRatio, viewSize.Y);
+            ? viewSize with { Y = viewSize.X / imageAspectRatio }
+            : viewSize with { X = viewSize.Y * imageAspectRatio };
 
         int camX = _scrollX + _nmtbX * 256;
         int camY = _scrollY + _nmtbY * 240;
