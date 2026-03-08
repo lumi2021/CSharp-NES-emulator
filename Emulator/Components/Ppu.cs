@@ -13,8 +13,7 @@ public class Ppu : Component
     private readonly byte[] _vramPallete = new byte[32];
     private readonly byte[,,] _vramChr = new byte[16 * 32, 8, 8];
     private byte[] _vramOam = new byte[256];
-
-    private int _cycleCounter = 0;
+    
     private int _scanlineCounter = 0;
     private bool _nmiOccurred = false;
     
@@ -57,6 +56,8 @@ public class Ppu : Component
         set => _ppustat = (byte)((_ppustat & ~0b_0100_0000) | (value ? 0b_0100_0000 : 0));
     }
 
+    public bool IsHorizontalMirroring => system.Rom.RomData.NametableArrangement == NametableArrangement.Horizontal;
+    
     #region SilkNet shit
     private int _texWrapMode = (int)TextureWrapMode.Repeat;
     private int _texMinFilter = (int)TextureMinFilter.Nearest;
@@ -111,7 +112,7 @@ public class Ppu : Component
             var coarseY = value >> 3;
             var fineY = value & 0b111;
 
-            _regt = (ushort)((_regt & ~0x73E0) | ((coarseY & 0x1F) << 5) | ((fineY & 0x07) << 12));
+            //_regt = (ushort)((_regt & ~0x73E0) | ((coarseY & 0x1F) << 5) | ((fineY & 0x07) << 12));
             _regt |= (ushort)((coarseY & 0b_11111) << 5);
             _regt |= (ushort)((fineY & 0b_111) << 12);
         }
@@ -199,17 +200,33 @@ public class Ppu : Component
 
         return (tile, paletteIndex);
     }
-    private (bool nmtb, ushort addr) ProcessNametableMirroring(ushort addr)
+    private (bool useNmtb0, ushort addr) ProcessNametableMirroring(ushort addr)
     {
-        var isHorizontal = system.Rom.RomData.NametableArrangement == NametableArrangement.Horizontal;
-        return addr switch
+        addr = (ushort)(0x2000 + (addr - 0x2000) % 0x1000);
+        var isHorizontal = IsHorizontalMirroring;
+        if (IsHorizontalMirroring)
         {
-            < 0x2400 => (false, (ushort)(addr - 0x2000)),
-            < 0x2800 => (!isHorizontal, (ushort)(addr - 0x2400)),
-            < 0x2C00 => (isHorizontal, (ushort)(addr - 0x2800)),
-            < 0x3000 => (true, (ushort)(addr - 0x2C00)),
-            _ => throw new Exception()
-        };
+            //  0 | 0
+            //  1 | 1
+            return addr switch
+            {
+                < 0x2400 => (true, (ushort)(addr - 0x2000)),
+                < 0x2800 => (true, (ushort)(addr - 0x2400)),
+                < 0x2C00 => (false, (ushort)(addr - 0x2800)),
+                _        => (false, (ushort)(addr - 0x2C00))
+            };
+        }
+        {
+            //  0 | 1
+            //  0 | 1
+            return addr switch
+            {
+                < 0x2400 => (true, (ushort)(addr - 0x2000)), 
+                < 0x2800 => (false, (ushort)(addr - 0x2400)),
+                < 0x2C00 => (true, (ushort)(addr - 0x2800)),
+                _        => (false, (ushort)(addr - 0x2C00))
+            };
+        }
     }
     
     private (byte r, byte g, byte b) GetColorFromBgPalette(int paletteIndex, int colorIndex)
@@ -242,14 +259,30 @@ public class Ppu : Component
         UpdateSpriteSheet();
     }
 
-    public void Tick()
+    public void ProcessScanline()
     {
-        UpdateForeground();
-        if (_updateNametablesSheet) UpdateBackground();
-        if (!VBlankNmInterrupt) return;
-        UpdateScrollFromRegt();
-        system.Cpu.RequestNmInterrupt();
-        VBlankNmInterrupt = false;
+        switch (++_scanlineCounter)
+        {
+            case >= 241 when !OnVblank:
+            {
+                OnVblank = true;
+                if (VBlankNmInterrupt) system.Cpu.RequestNmInterrupt();
+                VBlankNmInterrupt = false;
+            
+                UpdateForeground();
+                if (_updateNametablesSheet) UpdateBackground();
+                UpdateScrollFromRegt();
+                VBlankNmInterrupt = false;
+                break;
+            }
+            case >= 262:
+            {
+                _scanlineCounter = 0;
+                OnVblank = false;
+                Sprite0Hit = false;
+                break;
+            }
+        }
     }
     
     private void UpdateBackground()
@@ -263,9 +296,9 @@ public class Ppu : Component
                 for (var ty = 0; ty < 30; ty++)
                 {
                     var (tile, palIdx) = GetTile(nametable, tx, ty);
-                    
-                    var tbx = (nametable % 2) != 0 ? 32 : 0;
-                    var tby = nametable >= 2 ? 30 : 0;
+
+                    var tbx = (nametable % 2) * 32;
+                    var tby = (nametable / 2) * 30;
                     
                     for (var py = 0; py < 8; py++) for (var px = 0; px < 8; px++)
                     {
@@ -529,9 +562,6 @@ public class Ppu : Component
 
             
             ImGui.SeparatorText("Internal:");
-            
-            ImGui.TextDisabled("Cycle Counter:"); ImGui.SameLine();
-            ImGui.Text($"{_cycleCounter}");
             
             ImGui.TextDisabled("Scanline:"); ImGui.SameLine();
             ImGui.Text($"{_scanlineCounter}");

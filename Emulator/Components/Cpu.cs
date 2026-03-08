@@ -59,6 +59,9 @@ public class Cpu : Component
     
     public int clockCount = 0;
 
+    private ushort debugResetVector = 0;
+    private ushort debugNmiVector = 0;
+    private ushort debugInterruptVector = 0;
     public ushort ResetVector => MemReadWord(0xFFFC);
     public ushort NonMaskableInterrupt => MemReadWord(0xFFFA);
     public ushort InterruptRequest => MemReadWord(0xFFFE);
@@ -70,7 +73,11 @@ public class Cpu : Component
     
     public void Reset()
     {
-        SetProgramCounter(ResetVector);
+        debugResetVector = MemReadWord(0xFFFC);
+        debugNmiVector = MemReadWord(0xFFFE);
+        debugInterruptVector = MemReadWord(0xFFFE);
+        
+        SetProgramCounter(debugResetVector);
         flags = 0;
     }
     public void RequestNmInterrupt()
@@ -101,19 +108,11 @@ public class Cpu : Component
     }
 
 
-    public void Tick()
+    public void Step()
     {
         clockCount = 0;
-        
-        if (paused)
-        {
-            if (!doStep) return;
-            doStep = false;
-        }
-
         var opCode = ReadCounter();
         var (operation, mode) = DecodeOpCode(opCode);
-        
         //Console.WriteLine($"{opCode} {operation} {mode}");
         Execute(operation, mode);
     }
@@ -1003,9 +1002,9 @@ public class Cpu : Component
 
             ImGui.SeparatorText("Vectors:");
 
-            ImGui.TextDisabled("NMI:"); ImGui.SameLine(); ImGui.Text($"${NonMaskableInterrupt:X4}");
-            ImGui.TextDisabled("RES:"); ImGui.SameLine(); ImGui.Text($"${ResetVector:X4}");
-            ImGui.TextDisabled("IRQ:"); ImGui.SameLine(); ImGui.Text($"${InterruptRequest:X4}");
+            ImGui.TextDisabled("NMI:"); ImGui.SameLine(); ImGui.Text($"${debugNmiVector:X4}");
+            ImGui.TextDisabled("RES:"); ImGui.SameLine(); ImGui.Text($"${debugResetVector:X4}");
+            ImGui.TextDisabled("IRQ:"); ImGui.SameLine(); ImGui.Text($"${debugInterruptVector:X4}");
 
             ImGui.Separator();
 

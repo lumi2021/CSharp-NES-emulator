@@ -7,21 +7,12 @@ namespace Emulator.Components;
 
 public class Apu : Component
 {
-
-    private AL al;
-    private uint buffer;
-    private uint source;
-    
-    private const int BufferCount = 4;
-    private uint[] buffers = new uint[BufferCount];
     
     private const int SampleRate = 44100;
     private const int SamplesPerBuffer = 735; // ~16.6ms
-    private short[] currentBuffer = new short[SamplesPerBuffer];
-    private int bufferPos = 0;
-    private int nextBuffer = 0;
     
     private int cycleCounter = 0;
+    private int frameCounter = 0;
     
     private bool DMCActive = false;
     private bool DMCInterrupt = false;
@@ -54,52 +45,45 @@ public class Apu : Component
     {
         Program.DrawPopup += DebugAPU;
         
-        al = AL.GetApi();
-        var alc = ALContext.GetApi();
+        //al = AL.GetApi();
+        //var alc = ALContext.GetApi();
 
-        var dev = alc.OpenDevice(null);
-        if (dev == null) return;
+        //var dev = alc.OpenDevice(null);
+        //if (dev == null) return;
         
-        var ctx = alc.CreateContext(dev, null);
-        alc.MakeContextCurrent(ctx);
+        //var ctx = alc.CreateContext(dev, null);
+        //alc.MakeContextCurrent(ctx);
         
-        source = al.GenSource();
-        for (var i = 0; i < BufferCount; i++) buffers[i] = al.GenBuffer();
-        GenerateBuffer();
-        
-        al.SourcePlay(source);
+        //source = al.GenSource();
+        //for (var i = 0; i < BufferCount; i++) buffers[i] = al.GenBuffer();
+        //al.SourcePlay(source);
     }
 
-    public void Tick()
+    public void Step(int ticks)
     {
-        cycleCounter++;
+        Pulse1.Process(ticks);
+        Pulse2.Process(ticks);
+        Triangle.Process(ticks);
+        Noise.Process(ticks);
+        DMC.Process(ticks);
         
-        Pulse1.Process();
-        Pulse2.Process();
-        //Triangle.Process();
-        //Noise.Process();
-        //DMC.Process();
-        
-        var sample = MixChannels();
-        currentBuffer[bufferPos++] = (short)Math.Clamp(sample * short.MaxValue, short.MinValue, short.MaxValue);
-
-        if (bufferPos >= SamplesPerBuffer)
+        frameCounter += ticks;
+        while (frameCounter >= 7457)
         {
-            al.BufferData(buffers[nextBuffer], BufferFormat.Mono16, currentBuffer, SampleRate);
-            al.SourceQueueBuffers(source, [buffers[nextBuffer]]);
-            nextBuffer = (nextBuffer + 1) % BufferCount;
-            bufferPos = 0;
+            ClockFrameSequencer();
+            frameCounter -= 7457;
         }
+    }
+    private void ClockFrameSequencer()
+    {
+        //Pulse1.ClockEnvelope();
+        //Pulse2.ClockEnvelope();
+        //Noise.ClockEnvelope();
 
-        al.GetSourceProperty(source, GetSourceInteger.BuffersProcessed, out var processed);
-        while (processed-- > 0)
-        {
-            var unqueued = new uint[1];
-            al.SourceUnqueueBuffers(source, unqueued);
-        }
-
-        al.GetSourceProperty(source, GetSourceInteger.SourceState, out var state);
-        if (state != (int)SourceState.Playing) al.SourcePlay(source);
+        //Pulse1.ClockLength();
+        //Pulse2.ClockLength();
+        //Triangle.ClockLength();
+        //Noise.ClockLength();
     }
     
     
@@ -177,6 +161,8 @@ public class Apu : Component
                 Triangle.LinearCounter = value & 0x7F;
                 break;
             
+            case 0x4009: break; // Ignored address
+            
             case 0x400A: // Timer low
                 Triangle.Timer = (Triangle.Timer & 0xFF00) | value;
                 break;
@@ -192,6 +178,8 @@ public class Apu : Component
                 Noise.ConstantVolume = (value & 0x10) != 0;
                 Noise.Volume = value & 0x0F;
                 break;
+            
+            case 0x400D: break; // Ignored address
             
             case 0x400E: // Mode / period
                 Noise.Mode = (value & 0x80) != 0;
@@ -237,45 +225,13 @@ public class Apu : Component
                 break;
         }
     }
-    
-    private short MixChannels()
-    {
-        double p1 = Pulse1.GetSample();
-        double p2 = Pulse2.GetSample();
-        double tri = Triangle.GetSample();
-        double noi = Noise.GetSample();
-        double dmc = DMC.GetSample();
-        
-        double pulse = 0;
-        if (p1 > 0 || p2 > 0) pulse = 95.88 / ( (8128.0 / (p1 + p2)) + 100 );
 
-        var tnd = 0.0;
-        var t = tri / 8227.0;
-        var n = noi / 12241.0;
-        var d = dmc / 22638.0;
-
-        if (t + n + d > 0) tnd = 159.79 / (1.0 / (t + n + d) + 100);
-        var o = pulse + tnd;
-        
-        return (short)(o * 32767);
-    }
-    
-    short[] GenerateBuffer()
-    {
-        var pcm = new short[SamplesPerBuffer];
-        for (var i = 0; i < SamplesPerBuffer; i++)
-        {
-            float sample = MixChannels();
-            pcm[i] = (short)Math.Clamp(sample * short.MaxValue, short.MinValue, short.MaxValue);
-            Tick();
-        }
-        return pcm;
-    }
     
     private void DebugAPU()
     {
         ImGui.Begin("APU Debug");
         ImGui.Text($"Cycle: {cycleCounter}");
+        ImGui.Text($"Frame: {frameCounter}");
         
         ImGui.SeparatorText("Global Flags:");
         
@@ -290,7 +246,7 @@ public class Apu : Component
         
         ImGui.SeparatorText("Cannels");
 
-        if (ImGui.BeginTable("APUChannels", 8, ImGuiTableFlags.RowBg))
+        if (ImGui.BeginTable("APUChannels", 7, ImGuiTableFlags.RowBg))
         {
             ImGui.TableSetupColumn("Channel");
             ImGui.TableSetupColumn("Enabled");
@@ -299,7 +255,6 @@ public class Apu : Component
             ImGui.TableSetupColumn("TimerCounter");
             ImGui.TableSetupColumn("Volume/Linear");
             ImGui.TableSetupColumn("Length");
-            ImGui.TableSetupColumn("Sample");
 
             ImGui.TableHeadersRow();
 
@@ -313,7 +268,7 @@ public class Apu : Component
                 ImGui.TableNextColumn(); ImGui.Text(p.TimerCounter.ToString());
                 ImGui.TableNextColumn(); ImGui.Text(p.Volume.ToString());
                 ImGui.TableNextColumn(); ImGui.Text(p.LengthCounter.ToString());
-                ImGui.TableNextColumn(); ImGui.Text(p.GetSample().ToString(CultureInfo.InvariantCulture));
+                //ImGui.TableNextColumn(); ImGui.Text(p.GetSample().ToString(CultureInfo.InvariantCulture));
             }
 
             DrawPulse("Pulse 1", Pulse1);
@@ -328,7 +283,7 @@ public class Apu : Component
             ImGui.TableNextColumn(); ImGui.Text(Triangle.TimerCounter.ToString());
             ImGui.TableNextColumn(); ImGui.Text(Triangle.LinearCounter.ToString());
             ImGui.TableNextColumn(); ImGui.Text(Triangle.LengthCounter.ToString());
-            ImGui.TableNextColumn(); ImGui.Text(Triangle.GetSample().ToString(CultureInfo.InvariantCulture));
+            //ImGui.TableNextColumn(); ImGui.Text(Triangle.GetSample().ToString(CultureInfo.InvariantCulture));
 
             // Noise
             ImGui.TableNextRow();
@@ -339,7 +294,7 @@ public class Apu : Component
             ImGui.TableNextColumn(); ImGui.Text(Noise.TimerCounter.ToString());
             ImGui.TableNextColumn(); ImGui.Text(Noise.Volume.ToString());
             ImGui.TableNextColumn(); ImGui.Text(Noise.LengthCounter.ToString());
-            ImGui.TableNextColumn(); ImGui.Text(Noise.GetSample().ToString(CultureInfo.InvariantCulture));
+            //ImGui.TableNextColumn(); ImGui.Text(Noise.GetSample().ToString(CultureInfo.InvariantCulture));
                 
             // DMC
             ImGui.TableNextRow();
@@ -350,14 +305,13 @@ public class Apu : Component
             ImGui.TableNextColumn(); ImGui.Text(DMC.TimerCounter.ToString());
             ImGui.TableNextColumn(); ImGui.Text(DMC.OutputLevel.ToString());
             ImGui.TableNextColumn(); ImGui.Text(DMC.SampleData?.Length.ToString() ?? "null");
-            ImGui.TableNextColumn(); ImGui.Text(DMC.GetSample().ToString(CultureInfo.InvariantCulture));
+            //ImGui.TableNextColumn(); ImGui.Text(DMC.GetSample().ToString(CultureInfo.InvariantCulture));
                 
             ImGui.EndTable();
         }
             
         ImGui.End();
     }
-    
     
     private struct PulseChannel()
     {
@@ -377,33 +331,16 @@ public class Apu : Component
         
         public int LengthCounter;
         
-        public float GetSample()
-        {
-            if (!Enabled || LengthCounter == 0) return 0f;
-
-            var dutyPattern = new[] {0b00000001, 0b00000011, 0b00001111, 0b11111100}[Duty];
-            var output = ((dutyPattern & (1 << DutyStep)) != 0 ? 1f : -1f) * Volume / 15f;
-            return output;
-        }
-
-        public void Process()
+        public void Process(int ticks)
         {
             if (!Enabled) return;
             
-            TimerCounter--;
-            if (TimerCounter <= 0)
+            TimerCounter -= ticks;
+            while (TimerCounter < 0)
             {
-                TimerCounter = Timer;
-                DutyStep = (DutyStep + 1) % 8;
+                TimerCounter += Timer + 1;
+                DutyStep = (DutyStep + 1) & 7;
             }
-            
-            if (EnvelopeStartFlag)
-            {
-                EnvelopeCounter = 15;
-                EnvelopeStartFlag = false;
-            }
-            else if (EnvelopeCounter > 0) EnvelopeCounter--;
-            if (LengthCounter > 0 && !ConstantVolume) LengthCounter--;
         }
     }
     private struct TriangleChannel()
@@ -419,16 +356,21 @@ public class Apu : Component
         public bool LinearCounterReload;
 
         public int LengthCounter;
-
-        public float GetSample()
+        
+        public void Process(int ticks)
         {
-            if (!Enabled || LengthCounter == 0 || LinearCounter == 0) return 0f;
-            
-            var value = SequenceStep < 16 ? SequenceStep : 31 - SequenceStep;
-            return (value / 15f) * 2f - 1f;
+            if (!Enabled) return;
+            if (LengthCounter == 0) return;
+            if (LinearCounter == 0) return;
+
+            TimerCounter -= ticks;
+            while (TimerCounter < 0)
+            {
+                TimerCounter += Timer + 1;
+                SequenceStep = (SequenceStep + 1) & 31;
+            }
         }
     }
-    
     private struct NoiseChannel()
     {
         public bool Enabled;
@@ -446,15 +388,23 @@ public class Apu : Component
         public int LengthCounter;
         
         public bool Mode;
-
-        public float GetSample()
+        
+        public void Process(int ticks)
         {
-            if (!Enabled || LengthCounter == 0) return 0f;
-            
-            int bit = (Lfsr & 1) ^ ((Mode ? (Lfsr >> 6) : (Lfsr >> 1)) & 1);
-            Lfsr = (ushort)((Lfsr >> 1) | (bit << 14));
+            if (!Enabled) return;
 
-            return ((Lfsr & 1) != 0 ? 1f : -1f) * Volume / 15f;
+            TimerCounter -= ticks;
+            while (TimerCounter < 0)
+            {
+                TimerCounter += Timer + 1;
+
+                var feedback = Mode
+                    ? ((Lfsr & 1) ^ ((Lfsr >> 6) & 1))
+                    : ((Lfsr & 1) ^ ((Lfsr >> 1) & 1));
+                
+                Lfsr >>= 1;
+                Lfsr |= (ushort)(feedback << 14);
+            }
         }
     }
     private struct DMCChannel()
@@ -468,11 +418,17 @@ public class Apu : Component
         public int TimerCounter;
         
         public int OutputLevel;
-
-        public float GetSample()
+        
+        public void Process(int ticks)
         {
-            if (!Enabled || SampleData == null || SampleIndex >= SampleData.Length) return 0f;
-            return ((SampleData[SampleIndex] / 127f) * 2f - 1f);
+            if (!Enabled) return;
+            TimerCounter -= ticks;
+
+            while (TimerCounter <= 0) TimerCounter += Timer + 1;
+
+            if (SampleData == null || SampleIndex >= SampleData.Length) return;
+            var sample = SampleData[SampleIndex++];
+            OutputLevel = sample & 0x7F;
         }
     }
 

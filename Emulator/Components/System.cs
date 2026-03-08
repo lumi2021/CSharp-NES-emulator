@@ -6,6 +6,10 @@ namespace Emulator.Components;
 
 public class VirtualSystem
 {
+    private const double NES_FPS = 60.0988;
+    private const double FRAME_TIME = 1.0 / NES_FPS;
+    private double frameAccumulator;
+    
     private Bus _bus;
     private Cpu _cpu;
     private Ppu _ppu;
@@ -42,30 +46,37 @@ public class VirtualSystem
 
     public void Process(double delta)
     {
-        var todoClocks = Math.Min(8000, delta * 1_789_773.0);
-        
-        var restingClocks = (int)(todoClocks * 0.92);
-        while ((!_cpu.paused || _cpu.doStep) && restingClocks > 0)
+        if (_cpu.paused)
         {
-            _cpu.Tick();
-            _apu.Tick();
-            
-            restingClocks -= _cpu.clockCount;
+            if (_cpu.doStep) _cpu.doStep = false;
+            else return;
         }
-        
-        _ppu.OnVblank = true;
-        _ppu.Tick();
-        
-        restingClocks = (int)(todoClocks * 0.08);
-        while ((!_cpu.paused || _cpu.doStep) && restingClocks > 0)
+     
+        frameAccumulator += delta;
+        while (frameAccumulator >= FRAME_TIME)
         {
-            _cpu.Tick();
-            _apu.Tick();
+            const int SCANLINES_PER_FRAME = 262;
+            const int CPU_CYCLES_PER_SCANLINE = 114;
+
+            var scanlines = 0;
+            var cycles = 0;
+
+            while (scanlines < SCANLINES_PER_FRAME)
+            {
+                while (cycles < CPU_CYCLES_PER_SCANLINE)
+                {
+                    _cpu.Step();
+                    _apu.Step(_cpu.clockCount);
+                    cycles += _cpu.clockCount;
+                }
+
+                _ppu.ProcessScanline();
+                cycles = 0;
+                scanlines++;
+            }
             
-            restingClocks -= _cpu.clockCount;
+            frameAccumulator -= FRAME_TIME;
         }
-        
-        _ppu.OnVblank = false;
     }
 
     public void Draw()

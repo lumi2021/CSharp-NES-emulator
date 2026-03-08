@@ -1,6 +1,4 @@
-﻿using Emulator.Components;
-
-namespace Emulator.Mappers;
+﻿namespace Emulator.Mappers;
 
 internal class NROM(NesRom rom) : Mapper(rom)
 {
