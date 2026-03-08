@@ -29,8 +29,8 @@ public class NesRom
     public byte PRGDataSize16KB => header[4];
     public byte CHRDataSize8KB => header[5];
 
-    public bool Trainer => ((header[6] >> 6) & 1) == 1;
-    public NametableArrangement NametableArrangement => ((header[6] >> 8) & 1) == 0
+    public bool Trainer => (header[6] & 0x04) != 0;
+    public NametableArrangement NametableArrangement => (header[6] & 0x01) == 0
         ? NametableArrangement.Horizontal
         : NametableArrangement.Vertical;
 
@@ -56,7 +56,8 @@ public class NesRom
         chrData = data[b..(b + dl)];
         b += dl;
 
-        mapper = GetMapper((byte)((header[6] >> 4) | (header[7] & 0xF0)), this);
+        var mapperId = (header[7] & 0xF0) | (header[6] >> 4);
+        mapper = GetMapper((byte)mapperId, this);
         
         //Console.WriteLine(string.Join(' ', PrgData.Select(e => $"{e:x2}")));
     }

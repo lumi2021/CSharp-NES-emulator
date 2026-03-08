@@ -12,33 +12,18 @@ public class Bus(VirtualSystem sys): Component(sys)
     {
         switch (address)
         {
-            case < 0x2000:
-                _cpuLast = sys.Ram.Read(address);
-                break;
-            
-            case < 0x4000 or 0x4014:
-                _cpuLast = sys.Ppu.ReadRegister(address);
-                break;
-            
-            case 0x4015:
-                _cpuLast = sys.Apu.ReadStatus();
-                break;
-            
-            case 0x4016:
-                _cpuLast = sys.Joy1.InputBitRegister;
-                break;
+            case < 0x2000: _cpuLast = sys.Ram.Read(address); break;
+            case < 0x4000 or 0x4014: _cpuLast = sys.Ppu.ReadRegister(address); break;
+            case 0x4015: _cpuLast = sys.Apu.ReadStatus(); break;
+            case 0x4016: _cpuLast = sys.Joy1.InputBitRegister; break;
             
             case 0x4017:
                 _cpuLast = 0; //sys.Joy2.InputBitRegister,
                 break;
             
-            case >= 0x4020:
-                _cpuLast = sys.RomMapper.CpuRead(address);
-                break;
+            case >= 0x4020: _cpuLast = sys.RomMapper.CpuRead(address); break;
             
-            default:
-                Console.WriteLine($"Invalid read address {address:x4}");
-                break;
+            default: Console.WriteLine($"Invalid read address {address:x4}"); break;
         }
 
         return _cpuLast;
