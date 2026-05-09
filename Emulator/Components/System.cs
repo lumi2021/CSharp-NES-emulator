@@ -94,7 +94,7 @@ public class VirtualSystem
         _romMemory.LoadRom(rom);
 
         _cpu.Reset();
-        _ppu.ResetRomData();
+        _ppu.Reset();
 
         Console.WriteLine($"Entry: ${_cpu.ResetVector:X4}");
     }
