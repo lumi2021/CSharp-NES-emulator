@@ -28,6 +28,7 @@ public class Ppu : Component
         uniform usampler2D uChr;
         uniform usampler2D uNmt;
         uniform usampler2D uPalette;
+        uniform usampler2D uLineScroll;
         uniform vec3 uMasterPalette[64];
 
         uniform int uBgTable;
@@ -44,24 +45,29 @@ public class Ppu : Component
 
         void main() {
             ivec2 screen = ivec2(int(gl_FragCoord.x), 239 - int(gl_FragCoord.y));
-
-            int wx = screen.x + uScrollX + uNmtX * 256;
-            int wy = screen.y + uScrollY + uNmtY * 240;
-
-            int tx = (wx >> 3) & 63;
-            int ty = ((wy >> 3) % 60 + 60) % 60;
-
-            int pxT = wx & 7;
-            int pyT = wy & 7;
-
+        
+            uvec3 ls    = texelFetch(uLineScroll, ivec2(screen.y, 0), 0).rgb;
+            int scrollX = int(ls.r) | (((int(ls.b) >> 2) & 1) << 8);
+            int scrollY = int(ls.g);
+            int nmtX    =  int(ls.b)       & 1;
+            int nmtY    = (int(ls.b) >> 1) & 1;
+            
+            int wx = screen.x + scrollX + nmtX * 256;
+            int wy = screen.y + scrollY + nmtY * 240;
+            
+            int tx   = (wx >> 3) & 63;
+            int ty   = ((wy >> 3) % 60 + 60) % 60;
+            int pxT  = wx & 7;
+            int pyT  = wy & 7;
+            
             uvec2 nmData = texelFetch(uNmt, ivec2(tx, ty), 0).rg;
-            int tileIdx = int(nmData.r);
-            int palIdx  = int(nmData.g);
-
-            int chrX = uBgTable * 128 + (tileIdx % 16) * 8 + pxT;
-            int chrY = (tileIdx / 16)  * 8 + pyT;
+            int tileIdx  = int(nmData.r);
+            int palIdx   = int(nmData.g);
+            
+            int chrX    = uBgTable * 128 + (tileIdx % 16) * 8 + pxT;
+            int chrY    = (tileIdx / 16) * 8 + pyT;
             uint pixVal = texelFetch(uChr, ivec2(chrX, chrY), 0).r;
-
+            
             if (pixVal == 0u)
                 fragColor = nesBgColor(0);
             else
@@ -160,6 +166,9 @@ public class Ppu : Component
 
     private uint _fbo;
     private uint _fboTex;
+    
+    private uint _lineScrollTex;
+    private readonly byte[] _lineScrollBuf = new byte[240 * 3];
 
     private readonly byte[] _vramNametable0 = new byte[960 + 64];
     private readonly byte[] _vramNametable1 = new byte[960 + 64];
@@ -301,10 +310,22 @@ public class Ppu : Component
 
         switch (addr)
         {
-            case >= 0x2000 and < 0x3000: WriteWithNametableMirroring(addr, value); break;
+            case >= 0x2000 and < 0x3000:
+            {
+                WriteWithNametableMirroring(addr, value);
+            } break;
 
-            case >= 0x3F00 and <= 0x3F1F: _vramPallete[addr - 0x3F00]          = value; break;
-            case >= 0x3F20 and <= 0x3FFF: _vramPallete[(addr - 0x3F00) % 0x20] = value; break;
+            case >= 0x3F00 and <= 0x3F1F:
+            {
+                var pa = addr - 0x3F00;
+                _vramPallete[pa] = value;
+                if ((pa & 0x03) == 0) _vramPallete[pa ^ 0x10] = value;
+            } break;
+            case >= 0x3F20 and <= 0x3FFF:
+            {
+                
+                _vramPallete[(addr - 0x3F00) % 0x20] = value;
+            } break;
 
             //default: throw new ArgumentOutOfRangeException();
         }
@@ -318,16 +339,26 @@ public class Ppu : Component
         var addr = _vramAddr;
         _vramAddr += IncrementPerRead;
 
-        return addr switch
+        switch (addr)
         {
-            < 0x2000 => system.Rom.RomData.ChrData[addr],
-            < 0x3000 => ReadWithNametableMirroring(addr),
-
-            >= 0x3F00 and < 0x3F20  => _vramPallete[addr - 0x3F00],
-            >= 0x3F20 and <= 0x3FFF => _vramPallete[(addr - 0x3F00) % 0x20],
-
-            _ => 0
-        };
+            case < 0x2000: return system.Rom.RomData.ChrData[addr];
+            case < 0x3000: return ReadWithNametableMirroring(addr);
+            
+            case >= 0x3F00 and < 0x3F20:
+            {
+                var pa = addr - 0x3F00;
+                if ((pa & 0x03) == 0) pa &= 0x0F;
+                return _vramPallete[pa];
+            }
+            case >= 0x3F20 and <= 0x3FFF:
+            {
+                var pa = (addr - 0x3F00) % 0x20;
+                if ((pa & 0x03) == 0) pa &= 0x0F;
+                return _vramPallete[pa];
+            }
+            
+            default: return 0;
+        }
     }
 
 
@@ -410,11 +441,12 @@ public class Ppu : Component
 
         _vao = gl.GenVertexArray();
 
-        _chrTex     = MakeTexture(gl, 256, 128, InternalFormat.R8ui, PixelFormat.RedInteger, PixelType.UnsignedByte);
-        _nmtTex     = MakeTexture(gl, 64, 60, InternalFormat.RG8ui, PixelFormat.RGInteger, PixelType.UnsignedByte);
-        _paletteTex = MakeTexture(gl, 32, 1, InternalFormat.R8ui, PixelFormat.RedInteger, PixelType.UnsignedByte);
-        _oamTex     = MakeTexture(gl, 256, 1, InternalFormat.R8ui, PixelFormat.RedInteger, PixelType.UnsignedByte);
-
+        _chrTex        = MakeTexture(gl, 256, 128, InternalFormat.R8ui, PixelFormat.RedInteger, PixelType.UnsignedByte);
+        _nmtTex        = MakeTexture(gl, 64, 60, InternalFormat.RG8ui, PixelFormat.RGInteger, PixelType.UnsignedByte);
+        _paletteTex    = MakeTexture(gl, 32, 1, InternalFormat.R8ui, PixelFormat.RedInteger, PixelType.UnsignedByte);
+        _oamTex        = MakeTexture(gl, 256, 1, InternalFormat.R8ui, PixelFormat.RedInteger, PixelType.UnsignedByte);
+        _lineScrollTex = MakeTexture(gl, 240, 1, InternalFormat.Rgb8ui, PixelFormat.RgbInteger, PixelType.UnsignedByte);
+        
         _fboTex = gl.GenTexture();
         gl.BindTexture(TextureTarget.Texture2D, _fboTex);
         gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, 256, 240, 0,
@@ -430,8 +462,7 @@ public class Ppu : Component
         if (gl.CheckFramebufferStatus(FramebufferTarget.Framebuffer) != GLEnum.FramebufferComplete) throw new Exception();
 
         gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-
-
+        
         CreateSpriteSheets();
     }
 
@@ -444,26 +475,52 @@ public class Ppu : Component
     {
         switch (++_scanlineCounter)
         {
-            case >= 241 when !OnVblank:
+            case >= 0 and < 240:
+            {
+                var coarseX    = _regt & 0x1F;
+                var coarseY    = (_regt >> 5) & 0x1F;
+                var nametableX = (_regt >> 10) & 0x1;
+                var nametableY = (_regt >> 11) & 0x1;
+                var fineY      = (_regt >> 12) & 0x7;
+                var fineX      = _regx & 0x7;
+
+                if (coarseY >= 30) { coarseY -= 30; nametableY ^= 1; }
+
+                var sx = (coarseX * 8 + fineX) & 0x1FF;
+                var sy = coarseY * 8 + fineY;
+
+                var i = _scanlineCounter * 3;
+                _lineScrollBuf[i + 0] = (byte)(sx & 0xFF);
+                _lineScrollBuf[i + 1] = (byte)(sy & 0xFF);
+                _lineScrollBuf[i + 2] = (byte)(nametableX | (nametableY << 1) | (((sx >> 8) & 1) << 2));
+                
+                if (!Sprite0Hit) DetectSprite0Hit(_scanlineCounter);
+                break;
+            }
+            case 241 when !OnVblank:
             {
                 OnVblank = true;
                 if (VBlankNmInterrupt) system.Cpu.RequestNmInterrupt();
-                VBlankNmInterrupt = false;
 
                 UpdateForeground();
                 if (_updateNametablesSheet) UpdateBackground();
-                UpdateScrollFromRegt();
-                VBlankNmInterrupt = false;
+                UploadLineScroll();
                 break;
             }
             case >= 262:
-            {
                 _scanlineCounter = 0;
                 OnVblank         = false;
                 Sprite0Hit       = false;
-                break;
-            }
+            break;
         }
+    }
+
+    private void UploadLineScroll()
+    {
+        var gl = Program.gl;
+        gl.BindTexture(TextureTarget.Texture2D, _lineScrollTex);
+        gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgb8ui, 240, 1, 0,
+            PixelFormat.RgbInteger, PixelType.UnsignedByte, _lineScrollBuf);
     }
 
     private void UpdateBackground()
@@ -476,7 +533,7 @@ public class Ppu : Component
             for (var tx = 0; tx < 32; tx++)
             {
                 var (tile, palIdx) = GetTile(nmt, tx, ty);
-                int i = ((offY + ty) * 64 + (offX + tx)) * 2;
+                var i = ((offY + ty) * 64 + (offX + tx)) * 2;
                 buf[i + 0] = tile;
                 buf[i + 1] = palIdx;
             }
@@ -491,97 +548,153 @@ public class Ppu : Component
         gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.R8ui, 32, 1, 0,
             PixelFormat.RedInteger, PixelType.UnsignedByte, _vramPallete);
 
+        var bgDbg = new byte[512 * 480 * 4];
+        for (var nmt = 0; nmt < 4; nmt++)
+        {
+            int offX = (nmt % 2) * 256, offY = (nmt / 2) * 240;
+            for (var ty = 0; ty < 30; ty++)
+            for (var tx = 0; tx < 32; tx++)
+            {
+                var (tile, palIdx) = GetTile(nmt, tx, ty);
+                var chrIdx = BackgroundPatternTable * 256 + tile;
+                for (var py = 0; py < 8; py++)
+                for (var px = 0; px < 8; px++)
+                {
+                    var pv = _vramChr[chrIdx, px, py];
+                    var nesIdx = pv == 0
+                        ? _vramPallete[0]
+                        : _vramPallete[palIdx * 4 + pv];
+                    var c = palletes[nesIdx & 63];
+                    var di = ((offY + ty * 8 + py) * 512 + (offX + tx * 8 + px)) * 4;
+                    bgDbg[di] = c.r; bgDbg[di+1] = c.g; bgDbg[di+2] = c.b; bgDbg[di+3] = 255;
+                }
+            }
+        }
+        
+        gl.BindTexture(TextureTarget.Texture2D, _backgroundTexHandler);
+        gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, 512, 480, 0,
+            PixelFormat.Rgba, PixelType.UnsignedByte, bgDbg);
+        
         _updateNametablesSheet = false;
     }
     private void UpdateForeground()
     {
-        var buf = new byte[256 * 240 * 2];
-
+        var fgDbg = new byte[256 * 240 * 4];
         for (var sprite = 0; sprite < 64; sprite++)
         {
-            byte y = _vramOam[sprite * 4 + 0];
-            byte tileIndex = _vramOam[sprite * 4 + 1];
-            byte attributes = _vramOam[sprite * 4 + 2];
-            byte x = _vramOam[sprite * 4 + 3];
+            var sy0    = _vramOam[sprite * 4 + 0] + 1;
+            var tileI  = _vramOam[sprite * 4 + 1];
+            var attrs  = _vramOam[sprite * 4 + 2];
+            var sx0    = _vramOam[sprite * 4 + 3];
+            var flipX  = (attrs & 0x40) != 0;
+            var flipY  = (attrs & 0x80) != 0;
+            var palIdx = attrs & 3;
+            var height = SpriteHeight == 16 ? 16 : 8;
 
-            int spriteY = y + 1;
-            int spriteX = x;
+            if (sy0 <= 0 || sy0 >= 240) continue;
 
-            if (y == 0 || spriteY >= 240) continue;
-
-            bool flipX = (attributes & 0b0100_0000) != 0;
-            bool flipY = (attributes & 0b1000_0000) != 0;
-
-            int height = (SpriteHeight == 16) ? 16 : 8;
-
-
-            for (int py = 0; py < height; py++)
+            for (var py = 0; py < height; py++)
+            for (var px = 0; px < 8; px++)
             {
-                int sy = spriteY + py;
-                if (sy < 0 || sy >= 240) continue;
+                var sx = sx0 + px;
+                var sy = sy0 + py;
+                if (sx < 0 || sx >= 256 || sy < 0 || sy >= 240) continue;
 
-                for (int px = 0; px < 8; px++)
+                var tx = flipX ? 7 - px : px;
+                var ty = flipY ? (height == 16 ? (py < 8 ? 7 - py : 7 - (py - 8)) : 7 - py) : py % 8;
+
+                int usedTile;
+                if (height == 8)
+                    usedTile = tileI + SpritePatternTable * 256;
+                else
                 {
-                    int sx = spriteX + px;
-                    if (sx < 0 || sx >= 256) continue;
-
-                    int tx = flipX ? 7 - px : px;
-                    int ty = flipY ? ((height == 16) ? (py < 8 ? 7 - py : 7 - (py - 8)) : 7 - py) : (py % 8);
-
-                    int usedTile;
-                    if (height == 8)
-                    {
-                        usedTile = tileIndex + (SpritePatternTable == 0 ? 0 : 256);
-                    }
-                    else
-                    {
-                        int top = tileIndex & 0xFE;
-                        if (py < 8)
-                            usedTile = top + ((tileIndex & 1) == 1 ? 256 : 0);
-                        else
-                            usedTile = top + 1 + ((tileIndex & 1) == 1 ? 256 : 0);
-                    }
-
-                    int pixelValue = _vramChr[usedTile, tx, ty];
-                    if (pixelValue != 0 && sprite == 0 && !Sprite0Hit)
-                    {
-                        var bgPixel = ReadBackgroundPixel(sx, sy);
-                        if (bgPixel != 0) Sprite0Hit = true;
-                    }
-                    
-                    int idx = (sx + sy * 256) * 2;
-                    buf[idx + 0] = (byte)pixelValue;
-                    
+                    var top = tileI & 0xFE;
+                    usedTile = (py < 8 ? top : top + 1) + ((tileI & 1) == 1 ? 256 : 0);
                 }
+
+                var pv = _vramChr[usedTile, tx, ty];
+                if (pv == 0) continue;
+
+                var nesIdx = _vramPallete[(0x10 + palIdx * 4 + pv) & 0x1F];
+                var col = palletes[nesIdx & 63];
+                var di = (sy * 256 + sx) * 4;
+                fgDbg[di] = col.r; fgDbg[di+1] = col.g; fgDbg[di+2] = col.b; fgDbg[di+3] = 255;
             }
         }
-
+        
         var gl = Program.gl;
         gl.BindTexture(TextureTarget.Texture2D, _oamTex);
         gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.R8ui, 256, 1, 0,
             PixelFormat.RedInteger, PixelType.UnsignedByte, _vramOam);
+        
+        gl.BindTexture(TextureTarget.Texture2D, _foregroundTexHandler);
+        gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, 256, 240, 0,
+            PixelFormat.Rgba, PixelType.UnsignedByte, fgDbg);
     }
     private byte ReadBackgroundPixel(int screenX, int screenY)
     {
-        int wx = screenX + _scrollX + _nmtbX * 256;
-        int wy = screenY + _scrollY + _nmtbY * 240;
+        var wx = screenX + _scrollX + _nmtbX * 256;
+        var wy = screenY + _scrollY + _nmtbY * 240;
 
-        int tx = (wx >> 3) & 63;
-        int ty = ((wy >> 3) % 60 + 60) % 60;
+        var tx = (wx >> 3) & 63;
+        var ty = ((wy >> 3) % 60 + 60) % 60;
 
-        int pxT = wx & 7;
-        int pyT = wy & 7;
+        var pxT = wx & 7;
+        var pyT = wy & 7;
 
-        int table = (tx / 32) + ((ty / 30) * 2);
+        var table = (tx / 32) + ((ty / 30) * 2);
 
         tx %= 32;
         ty %= 30;
 
         var (tile, _) = GetTile(table, tx, ty);
 
-        int chrIndex = BackgroundPatternTable * 256 + tile;
+        var chrIndex = BackgroundPatternTable * 256 + tile;
 
         return _vramChr[chrIndex, pxT, pyT];
+    }
+    private void DetectSprite0Hit(int scanline)
+    {
+        var sprY   = _vramOam[0] + 1;
+        var sprX   = _vramOam[3];
+        var tileI  = _vramOam[1];
+        var attrs  = _vramOam[2];
+        var flipX  = (attrs & 0x40) != 0;
+        var flipY  = (attrs & 0x80) != 0;
+        var height = SpriteHeight == 16 ? 16 : 8;
+
+        var dy = scanline - sprY;
+        if (dy < 0 || dy >= height) return;
+
+        for (var px = 0; px < 8; px++)
+        {
+            var sx = sprX + px;
+            if (sx >= 255) continue;
+
+            var tx     = flipX ? 7 - px : px;
+            var halfDy = dy % 8;
+            var tyLocal = flipY ? 7 - halfDy : halfDy;
+            
+            var inBottom = dy >= 8;
+            if (flipY && height == 16) inBottom = !inBottom;
+
+            int usedTile;
+            if (height == 8) usedTile = tileI + SpritePatternTable * 256;
+            else
+            {
+                var top = tileI & 0xFE;
+                usedTile = (inBottom ? top + 1 : top) + ((tileI & 1) == 1 ? 256 : 0);
+            }
+
+            var spPix = _vramChr[usedTile, tx, tyLocal];
+            if (spPix == 0) continue;
+
+            if (ReadBackgroundPixel(sx, scanline) != 0)
+            {
+                Sprite0Hit = true;
+                return;
+            }
+        }
     }
     
     private void UpdateScrollFromRegt()
@@ -618,7 +731,7 @@ public class Ppu : Component
 
     public byte ReadRegister(ushort addr)
     {
-        int regIndex = (addr - 0x2000) & 7;
+        var regIndex = (addr - 0x2000) & 7;
         switch (regIndex)
         {
             case 2:
@@ -640,8 +753,6 @@ public class Ppu : Component
                 Console.WriteLine($"PPU Register {regIndex} is not readable!");
             break;
         }
-
-        ;
 
         return 0;
     }
@@ -669,8 +780,6 @@ public class Ppu : Component
                 Console.WriteLine($"PPU Register {regIndex} is not writeable!");
             break;
         }
-
-        ;
     }
 
 
@@ -805,7 +914,7 @@ public class Ppu : Component
     {
         ImGui.Begin("VRAM View", ImGuiWindowFlags.AlwaysAutoResize);
         {
-            ImDrawListPtr drawList = ImGui.GetWindowDrawList();
+            var drawList = ImGui.GetWindowDrawList();
             ;
 
             ImGui.SeparatorText("Pattern Tables:");
@@ -816,19 +925,19 @@ public class Ppu : Component
 
             ImGui.SeparatorText("Nametables:");
 
-            float maxW = ImGui.GetContentRegionAvail().X;
+            var maxW = ImGui.GetContentRegionAvail().X;
             Vector2 renderRes = new(256, 240);
 
-            float imageAspectRatio = renderRes.X / renderRes.Y;
+            var imageAspectRatio = renderRes.X / renderRes.Y;
             Vector2 finalSize = new(maxW, maxW / imageAspectRatio);
-            float scale = finalSize.X / renderRes.X / 2;
+            var scale = finalSize.X / renderRes.X / 2;
 
             var cp = ImGui.GetCursorScreenPos();
 
             ImGui.Image((nint)_backgroundTexHandler, finalSize);
 
-            int camX = _scrollX + _nmtbX * 256;
-            int camY = _scrollY + _nmtbY * 240;
+            var camX = _scrollX + _nmtbX * 256;
+            var camY = _scrollY + _nmtbY * 240;
 
             drawList.AddRect(
                 cp + (new Vector2(camX * scale, camY * scale)),
@@ -951,8 +1060,14 @@ public class Ppu : Component
         // Bind textures
         gl.ActiveTexture(TextureUnit.Texture0);
         gl.BindTexture(TextureTarget.Texture2D, _chrTex);
+        gl.ActiveTexture(TextureUnit.Texture1);
+        gl.BindTexture(TextureTarget.Texture2D, _nmtTex);
+        gl.ActiveTexture(TextureUnit.Texture2);
+        gl.BindTexture(TextureTarget.Texture2D, _oamTex);
         gl.ActiveTexture(TextureUnit.Texture3);
         gl.BindTexture(TextureTarget.Texture2D, _paletteTex);
+        gl.ActiveTexture(TextureUnit.Texture4);
+        gl.BindTexture(TextureTarget.Texture2D, _lineScrollTex);
 
         gl.UseProgram(_bgShader);
 
@@ -966,9 +1081,8 @@ public class Ppu : Component
         gl.Uniform1(gl.GetUniformLocation(_bgShader, "uNmtX"), _nmtbX);
         gl.Uniform1(gl.GetUniformLocation(_bgShader, "uNmtY"), _nmtbY);
         gl.Uniform3(gl.GetUniformLocation(_bgShader, "uMasterPalette"), floats);
-
-        gl.ActiveTexture(TextureUnit.Texture1);
-        gl.BindTexture(TextureTarget.Texture2D, _nmtTex);
+        gl.Uniform1(gl.GetUniformLocation(_bgShader, "uLineScroll"), 4);
+        
         gl.DrawArrays(PrimitiveType.Triangles, 0, 3);
 
         // foreground
@@ -982,9 +1096,7 @@ public class Ppu : Component
         gl.Uniform1(gl.GetUniformLocation(_sprShader, "uSprTable"), SpritePatternTable);
         gl.Uniform1(gl.GetUniformLocation(_sprShader, "uSprHeight"), SpriteHeight);
         gl.Uniform3(gl.GetUniformLocation(_sprShader, "uMasterPalette"), floats);
-
-        gl.ActiveTexture(TextureUnit.Texture2);
-        gl.BindTexture(TextureTarget.Texture2D, _oamTex);
+        
         gl.DrawArrays(PrimitiveType.Triangles, 0, 3);
         gl.Disable(EnableCap.Blend);
 
@@ -996,12 +1108,12 @@ public class Ppu : Component
 
         ImGui.Begin("Video Out");
 
-        Vector2 viewSize = ImGui.GetContentRegionAvail();
+        var viewSize = ImGui.GetContentRegionAvail();
         Vector2 renderRes = new(256, 240);
-        float ar = renderRes.X / renderRes.Y;
-        float canvasAr = viewSize.X / viewSize.Y;
+        var ar = renderRes.X / renderRes.Y;
+        var canvasAr = viewSize.X / viewSize.Y;
 
-        Vector2 finalSize = (canvasAr < ar)
+        var finalSize = (canvasAr < ar)
             ? viewSize with { Y = viewSize.X / ar }
             : viewSize with { X = viewSize.Y * ar };
 
@@ -1079,6 +1191,38 @@ public class Ppu : Component
         gl.BindTexture(TextureTarget.Texture2D, _chrTex);
         gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.R8ui, 256, 128, 0,
             PixelFormat.RedInteger, PixelType.UnsignedByte, buf);
+        
+        // Pattern table viewers — RGBA8 com paleta de debug (preto→branco)
+        ReadOnlySpan<(byte r, byte g, byte b)> dbgPal =
+            [(0,0,0), (85,85,85), (170,170,170), (255,255,255)];
+
+        var leftBuf  = new byte[128 * 128 * 4];
+        var rightBuf = new byte[128 * 128 * 4];
+
+        for (var y = 0; y < 128; y++)
+        for (var x = 0; x < 128; x++)
+        {
+            var pv = buf[y * 256 + x];
+            var dst = (y * 128 + x) * 4;
+            leftBuf[dst]     = dbgPal[pv].r;
+            leftBuf[dst + 1] = dbgPal[pv].g;
+            leftBuf[dst + 2] = dbgPal[pv].b;
+            leftBuf[dst + 3] = 255;
+
+            pv                = buf[y * 256 + 128 + x];
+            rightBuf[dst]     = dbgPal[pv].r;
+            rightBuf[dst + 1] = dbgPal[pv].g;
+            rightBuf[dst + 2] = dbgPal[pv].b;
+            rightBuf[dst + 3] = 255;
+        }
+
+        gl.BindTexture(TextureTarget.Texture2D, _spriteSheetHandlerLeft);
+        gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, 128, 128, 0,
+            PixelFormat.Rgba, PixelType.UnsignedByte, leftBuf);
+
+        gl.BindTexture(TextureTarget.Texture2D, _spriteSheetHandlerRight);
+        gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, 128, 128, 0,
+            PixelFormat.Rgba, PixelType.UnsignedByte, rightBuf);
     }
 
     private (byte r, byte g, byte b) GetPal(int index) => palletes[index & 0b00_111111];
