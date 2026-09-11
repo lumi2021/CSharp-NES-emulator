@@ -72,8 +72,8 @@ public static class Program
         //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Donkey Kong Classics.nes"));
         //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/snow.nes"));
         //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Thwaite.nes"));
-        _system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Pac-Man.nes"));
-        //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Ice Climber.nes"));
+        //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Pac-Man.nes"));
+        _system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Ice Climber.nes"));
         //_system.InsertCartriadge(RomReader.LoadFromPath("ROMs/Mitsume ga Tooru.nes"));
     }
     private static void OnClose()

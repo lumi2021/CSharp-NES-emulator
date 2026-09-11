@@ -21,8 +21,8 @@ internal class NROM(NesRom rom) : Mapper(rom)
     }
 
     public override void CpuWrite(ushort address, byte value)
-    {
-        throw new NotImplementedException();
+    { 
+        // throw new NotImplementedException();
     }
 
     public override byte PpuRead(ushort address)

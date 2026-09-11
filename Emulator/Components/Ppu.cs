@@ -207,6 +207,8 @@ public class Ppu : Component
     private uint _backgroundTexHandler;
     private uint _foregroundTexHandler;
 
+    private byte _readBuffer;
+
     public bool OnVblank
     {
         get => (_ppustat & 0b_1000_0000) != 0;
@@ -306,11 +308,11 @@ public class Ppu : Component
     private void WritePpuData(byte value)
     {
         var addr = _vramAddr;
-        _vramAddr += IncrementPerRead;
+        _vramAddr = (ushort)((_vramAddr + IncrementPerRead) & 0x7FFF);
 
         switch (addr)
         {
-            case >= 0x2000 and < 0x3000:
+            case >= 0x2000 and < 0x3EFF:
             {
                 WriteWithNametableMirroring(addr, value);
             } break;
@@ -333,32 +335,45 @@ public class Ppu : Component
         _regw                  = false;
         _updateNametablesSheet = true;
     }
-
+    
     private byte ReadPpuData()
     {
-        var addr = _vramAddr;
-        _vramAddr += IncrementPerRead;
+        var addr = (ushort)(_vramAddr & 0x3FFF);
+        byte result;
 
         switch (addr)
         {
-            case < 0x2000: return system.Rom.RomData.ChrData[addr];
-            case < 0x3000: return ReadWithNametableMirroring(addr);
+            case < 0x3F00:
+            {
+                result = _readBuffer;
+                _readBuffer = addr switch
+                {
+                    < 0x2000 => system.Rom.RomData.ChrData[addr],
+                    _        => ReadWithNametableMirroring(addr)
+                };
+                break;
+            }
             
-            case >= 0x3F00 and < 0x3F20:
+            case < 0x3F20:
             {
                 var pa = addr - 0x3F00;
                 if ((pa & 0x03) == 0) pa &= 0x0F;
-                return _vramPallete[pa];
+                result = _vramPallete[pa];
             }
-            case >= 0x3F20 and <= 0x3FFF:
+            break;
+            
+            case <= 0x3FFF:
             {
                 var pa = (addr - 0x3F00) % 0x20;
                 if ((pa & 0x03) == 0) pa &= 0x0F;
-                return _vramPallete[pa];
-            }
-            
-            default: return 0;
+                result = _vramPallete[pa];
+            } break;
+
+            default: result = 0; break;
         }
+
+        _vramAddr = (ushort)((_vramAddr + IncrementPerRead) & 0x7FFF);
+        return result;
     }
 
 

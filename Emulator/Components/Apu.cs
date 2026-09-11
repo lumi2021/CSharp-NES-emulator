@@ -553,7 +553,7 @@ public class Apu : Component
             if (!Enabled || LengthCounter == 0) return 0;
             if ((Lfsr & 1) != 0) return 0;
 
-            return (ConstantVolume ? Volume : EnvelopeDecay) * 0.5f;
+            return (ConstantVolume ? Volume : EnvelopeDecay) * 0.25f;
         }
     }
     private class DMCChannel

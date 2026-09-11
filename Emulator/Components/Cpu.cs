@@ -74,7 +74,7 @@ public class Cpu : Component
     public void Reset()
     {
         debugResetVector = MemReadWord(0xFFFC);
-        debugNmiVector = MemReadWord(0xFFFE);
+        debugNmiVector = MemReadWord(0xFFFA);
         debugInterruptVector = MemReadWord(0xFFFE);
         
         SetProgramCounter(debugResetVector);
@@ -320,7 +320,7 @@ public class Cpu : Component
                     progCounter = (ushort)(PopAddress() + 1);
                 } break;
             case Operation.Rti: {
-                    flags = Pop();
+                    flags       = (byte)(Pop() & 0b_11_00_1111);
                     progCounter = PopAddress();
                 } break;
 
