@@ -33,19 +33,21 @@ public class VirtualSystem
 
     public VirtualSystem()
     {
-        _bus = new(this);
-        _cpu = new(this);
-        _ppu = new(this);
-        _apu = new(this);
-        _ramMemory = new(this);
-        _romMemory = new(this);
+        _bus       = new Bus(this);
+        _cpu       = new Cpu(this);
+        _ppu       = new Ppu(this);
+        _apu       = new Apu(this);
+        _ramMemory = new RamMemory(this);
+        _romMemory = new RomMemory(this);
 
-        _joy1 = new(0, this, Program.input);
+        _joy1 = new JoyController(0, this, Program.input);
     }
 
 
     public void Process(double delta)
     {
+        if (!_romMemory.HasRom) return;
+        
         if (_cpu.paused)
         {
             if (_cpu.doStep) _cpu.doStep = false;

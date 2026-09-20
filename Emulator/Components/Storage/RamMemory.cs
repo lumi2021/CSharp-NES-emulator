@@ -17,7 +17,7 @@ public class RamMemory : Component
 
     public RamMemory(VirtualSystem sys) : base(sys)
     {
-        Program.DrawPopup += ShowMemory;
+        Program.WindowViews.Add(("RAM View", true, ShowMemory));
     }
 
     private void ShowMemory()

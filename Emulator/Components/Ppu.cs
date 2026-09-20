@@ -445,9 +445,9 @@ public class Ppu : Component
 
     public Ppu(VirtualSystem mb) : base(mb)
     {
-        Program.DrawPopup += RenderGame;
-        Program.DrawPopup += DebugPpu;
-        Program.DrawPopup += DebugVram;
+        Program.WindowViews.Add(("Render Game", true, RenderGame));
+        Program.WindowViews.Add(("PPU Debug", true, DebugPpu));
+        Program.WindowViews.Add(("VRAM View", true, DebugVram));
 
         var gl = Program.gl;
 
@@ -805,8 +805,8 @@ public class Ppu : Component
     private int _palleteIndexA = 1;
     private int _palleteIndexB = 17;
     private int _palleteIndexC = 2;
-    private bool _showNametablesAttributeTable = false;
-    private bool _updateNametablesSheet = false;
+    private bool _showNametablesAttributeTable;
+    private bool _updateNametablesSheet;
 
     private void DebugPpu()
     {
@@ -887,42 +887,6 @@ public class Ppu : Component
             ImGui.Text($"{_scanlineCounter}");
         }
         ImGui.End();
-
-        ImGui.Begin("Sprite Sheet View", ImGuiWindowFlags.AlwaysAutoResize);
-        {
-            ImGui.Image((nint)_chrTex, new Vector2(100, 100), new Vector2(0, 1), new Vector2(1, 0));
-
-            if (ImGui.Button("Left Sheet")) _viewingSheet = 0;
-            ImGui.SameLine();
-            if (ImGui.Button("Right Sheet")) _viewingSheet = 1;
-
-            ImGui.Text("Pallete:");
-
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(90);
-            if (ImGui.InputInt("A", ref _palleteIndexA, 1, 1, ImGuiInputTextFlags.EnterReturnsTrue))
-            {
-                if (_palleteIndexA > 64) _palleteIndexA -= 64;
-                if (_palleteIndexA < 1) _palleteIndexA  += 64;
-            }
-
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(90);
-            if (ImGui.InputInt("B", ref _palleteIndexB, 1, 1, ImGuiInputTextFlags.EnterReturnsTrue))
-            {
-                if (_palleteIndexB > 64) _palleteIndexB -= 64;
-                if (_palleteIndexB < 1) _palleteIndexB  += 64;
-            }
-
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(90);
-            if (ImGui.InputInt("C", ref _palleteIndexC, 1, 1, ImGuiInputTextFlags.EnterReturnsTrue))
-            {
-                if (_palleteIndexC > 64) _palleteIndexC -= 64;
-                if (_palleteIndexC < 1) _palleteIndexC  += 64;
-            }
-        }
-        ImGui.End();
     }
 
     private void DebugVram()
@@ -930,13 +894,12 @@ public class Ppu : Component
         ImGui.Begin("VRAM View", ImGuiWindowFlags.AlwaysAutoResize);
         {
             var drawList = ImGui.GetWindowDrawList();
-            ;
 
             ImGui.SeparatorText("Pattern Tables:");
 
-            ImGui.Image((nint)_spriteSheetHandlerLeft, new(300, 300));
+            ImGui.Image((nint)_spriteSheetHandlerLeft, new Vector2(300, 300));
             ImGui.SameLine();
-            ImGui.Image((nint)_spriteSheetHandlerRight, new(300, 300));
+            ImGui.Image((nint)_spriteSheetHandlerRight, new Vector2(300, 300));
 
             ImGui.SeparatorText("Nametables:");
 
@@ -1022,7 +985,7 @@ public class Ppu : Component
                 drawList.AddRectFilled(posA, posB, color);
             }
 
-            ImGui.Dummy(new(32 * 16, 32));
+            ImGui.Dummy(new Vector2(32 * 16, 32));
 
             ImGui.TextDisabled($"{0x00:X2}:");
             ImGui.SameLine();
@@ -1045,7 +1008,7 @@ public class Ppu : Component
                 drawList.AddRectFilled(posA, posB, color, 0);
             }
 
-            ImGui.Dummy(new(32 * 16, 32));
+            ImGui.Dummy(new Vector2(32 * 16, 32));
 
             ImGui.TextDisabled($"{0x10:X2}:");
             ImGui.SameLine();

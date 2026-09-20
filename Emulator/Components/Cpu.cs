@@ -1,20 +1,21 @@
-﻿using Emulator.Components.Core;
+﻿using System.Numerics;
+using Emulator.Components.Core;
 using ImGuiNET;
-using System.Text;
 
 namespace Emulator.Components;
 
 public class Cpu : Component
 {
-    public ushort progCounter = 0;
+    private readonly VirtualSystem _mb;
+    public ushort progCounter;
 
-    public byte stackPointer = 0;
+    public byte stackPointer;
 
-    public byte accumulator = 0;
-    public byte indexX = 0;
-    public byte indexY = 0;
+    public byte accumulator;
+    public byte indexX;
+    public byte indexY;
 
-    public byte flags = 0;
+    public byte flags;
 
     public bool Negative
     {
@@ -68,7 +69,8 @@ public class Cpu : Component
 
     public Cpu(VirtualSystem mb) : base(mb)
     {
-        Program.DrawPopup += DebugCPU;
+        _mb = mb;
+        Program.WindowViews.Add(("CPU Debug", true, DebugCPU));
     }
     
     public void Reset()
@@ -970,7 +972,7 @@ public class Cpu : Component
 
     private void DebugCPU()
     {
-        ImGui.SetNextWindowSize(new(150, 270));
+        ImGui.SetNextWindowSize(new Vector2(150, 270));
         ImGui.Begin("CPU Debug", ImGuiWindowFlags.NoResize);
         {
             ImGui.SeparatorText("Registers");
@@ -1011,7 +1013,10 @@ public class Cpu : Component
             ImGui.BeginTable("CPU controls", 3);
 
             ImGui.TableNextColumn();
-            if (ImGui.Button(paused ? "Continue" : "Pause", new(-1, 20))) paused = !paused;
+            if (ImGui.Button(paused ? "Continue" : "Pause", new Vector2(-1, 20)))
+            {
+                if (_mb.Rom != null) paused = !paused;
+            }
 
             ImGui.TableNextColumn();
             if (!paused) ImGui.BeginDisabled();
@@ -1110,7 +1115,6 @@ public class Cpu : Component
         Txs, Tya,
 
         // Illegal shit here
-
         Alr, Anc, Anc2, Ane, Arr, Dcp, Isc, Las, Lax,
         Lxa, Rla, Rra, Sax, Sbx, Sha, Shx, Shy, Slo,
         Sre, Tas, Usbc, Nops, Kil

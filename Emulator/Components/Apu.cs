@@ -62,7 +62,7 @@ public class Apu : Component
     
     public unsafe Apu(VirtualSystem sys) : base(sys)
     {
-        Program.DrawPopup += DebugAPU;
+        Program.WindowViews.Add(("APU Debug", true, DebugAPU));
         
         al = AL.GetApi();
         var alc = ALContext.GetApi();

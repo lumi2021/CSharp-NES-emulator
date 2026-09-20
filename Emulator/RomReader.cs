@@ -68,7 +68,7 @@ public class NesRom
         {
             0x00 => new NROM(parent),
 
-            _ => throw new NotImplementedException($"mapper {mapper}")
+            _ => throw new NotImplementedException($"mapper 0x{mapper:x2} not supported"),
         };
     }
 }

@@ -22,8 +22,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="ROMs\**\*">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    <None Update="imgui_config_default.ini">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 

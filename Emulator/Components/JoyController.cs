@@ -42,7 +42,8 @@ public class JoyController : Component
         this.joyId = joyId;
         inputContext = inputCtx;
         SetupInputMap();
-        Program.DrawPopup += DebugController;
+        
+        Program.WindowViews.Add(("Joy1 View", true, DebugController));
     }
 
     private void SetupInputMap()
